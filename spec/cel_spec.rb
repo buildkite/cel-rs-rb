@@ -1,0 +1,121 @@
+# frozen_string_literal: true
+
+require "spec_helper"
+
+RSpec.describe CEL do
+  describe ".compile" do
+    it "compiles and executes simple expressions" do
+      program = CEL.compile("1 + 1")
+      expect(program.execute).to eq(2)
+    end
+
+    it "raises parse errors for invalid programs" do
+      expect { CEL.compile("1 +") }.to raise_error(CEL::ParseError)
+    end
+  end
+
+  describe CEL::Context do
+    it "supports ruby variables for basic types" do
+      context = CEL::Context.new
+      context.add_variable("nil_value", nil)
+      context.add_variable("flag", true)
+      context.add_variable("num", 41)
+      context.add_variable("float_num", 1.5)
+      context.add_variable("name", "cel")
+      context.add_variable("ary", [1, 2, 3])
+      context.add_variable("obj", {"a" => 1, :b => 2})
+
+      expect(CEL.compile("nil_value == null").execute(context)).to eq(true)
+      expect(CEL.compile("flag && true").execute(context)).to eq(true)
+      expect(CEL.compile("num + 1").execute(context)).to eq(42)
+      expect(CEL.compile("float_num + 0.5").execute(context)).to eq(2.0)
+      expect(CEL.compile("name.startsWith('c')").execute(context)).to eq(true)
+      expect(CEL.compile("ary[2]").execute(context)).to eq(3)
+      expect(CEL.compile("obj.a + obj.b").execute(context)).to eq(3)
+    end
+
+    it "registers ruby functions and supports variadic calls" do
+      context = CEL::Context.new
+      context.define_function("sum") do |*values|
+        values.flatten.sum
+      end
+
+      expect(CEL.compile("sum(1, 2, 3)").execute(context)).to eq(6)
+    end
+
+    it "passes method receiver as first block arg for method calls" do
+      context = CEL::Context.new(true)
+      context.define_function("startsWith") { |target, prefix| target.start_with?(prefix) }
+
+      expect(CEL.compile("'hello'.startsWith('he')").execute(context)).to eq(true)
+    end
+
+    it "raises clear type error for unsupported variable types" do
+      context = CEL::Context.new
+      expect { context.add_variable("bad", Object.new) }.to raise_error(CEL::TypeError)
+    end
+  end
+
+  describe CEL::Program do
+    it "exposes references" do
+      program = CEL.compile("size(foo) > 0")
+      refs = program.references
+      expect(refs["variables"]).to include("foo")
+      expect(refs["functions"]).to include("size")
+    end
+
+    it "ports core CEL suite behavior examples" do
+      tests = {
+        "size([1,2,3]) == 3" => true,
+        "[1,2,3].map(x, x * 2)" => [2, 4, 6],
+        "[1,2,3].filter(x, x > 1)" => [2, 3],
+        "[1,2,3].exists(x, x == 2)" => true,
+        "[1,2,3].all(x, x > 0)" => true,
+        "{'a': 1}.contains('a')" => true,
+        "optional.of(1).hasValue()" => true
+      }
+
+      tests.each do |expr, expected|
+        expect(CEL.compile(expr).execute).to eq(expected)
+      end
+    end
+
+    it "returns execution errors as CEL::ExecutionError" do
+      program = CEL.compile("1 / 0")
+      expect { program.execute }.to raise_error(CEL::ExecutionError)
+    end
+
+    it "releases GVL so other ruby threads can progress" do
+      context = CEL::Context.new
+      context.add_variable("items", Array.new(15_000, 1))
+      program = CEL.compile("items.map(x, x + 1)")
+
+      marker = Queue.new
+      worker = Thread.new do
+        100.times do
+          marker << :tick
+          sleep(0.001)
+        end
+      end
+
+      runner = Thread.new { program.execute(context) }
+
+      sleep(0.01)
+      expect(marker.size).to be > 0
+
+      runner.join
+      worker.join
+    end
+
+    it "is thread-safe when executing concurrently" do
+      context = CEL::Context.new
+      context.add_variable("n", 10)
+      program = CEL.compile("n * 2")
+
+      threads = Array.new(8) { Thread.new { 50.times.map { program.execute(context) } } }
+      values = threads.flat_map(&:value)
+
+      expect(values.uniq).to eq([20])
+    end
+  end
+end
