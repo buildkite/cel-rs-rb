@@ -77,9 +77,14 @@ program.execute(context)
 
 ## Thread safety and concurrency
 
-- Context data is mutex-protected and immutable during execution snapshots.
-- CEL execution is run with the Ruby GVL released so other Ruby threads can run.
-- Ruby callbacks from CEL functions temporarily re-acquire the GVL.
+- Compiled `CEL::Program` instances can be shared and executed concurrently from
+  multiple Ruby threads with separate execution contexts.
+- Each thread may pass its own `CEL::Context`; context data is mutex-protected
+  and copied into an immutable execution snapshot for each run.
+- CEL evaluation runs with the Ruby GVL released, so other Ruby threads can keep
+  progressing while a program executes.
+- Ruby callbacks from CEL functions temporarily re-acquire the GVL before
+  invoking Ruby code.
 
 ## Development
 
