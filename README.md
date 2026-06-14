@@ -1,5 +1,7 @@
 # cel-rs-rb
 
+[![Gem Version](https://img.shields.io/gem/v/cel-rs-rb.svg)](https://rubygems.org/gems/cel-rs-rb)
+
 Ruby bindings for the Rust [`cel`](https://crates.io/crates/cel) crate, implemented with [Magnus](https://github.com/matsadler/magnus).
 
 ## Goals
