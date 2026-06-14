@@ -135,15 +135,38 @@ RSpec.describe CEL do
       worker.join
     end
 
-    it "is thread-safe when executing concurrently" do
-      context = CEL::Context.new
-      context.add_variable("n", 10)
-      program = CEL.compile("n * 2")
+    it "executes the same program concurrently with independent contexts" do
+      program = CEL.compile("items.map(x, x + offset).filter(x, x > cutoff).size() + id")
+      ready = Queue.new
+      start = Queue.new
 
-      threads = Array.new(8) { Thread.new { 50.times.map { program.execute(context) } } }
-      values = threads.flat_map(&:value)
+      threads = Array.new(8) do |id|
+        Thread.new do
+          ready << true
+          start.pop
 
-      expect(values.uniq).to eq([20])
+          offset = id % 3
+          context = CEL::Context.build(
+            id: id,
+            items: Array.new(200, id),
+            offset: offset,
+            cutoff: id
+          )
+
+          25.times.map { program.execute(context) }
+        end
+      end
+      8.times { ready.pop }
+      8.times { start << true }
+      results = threads.map(&:value)
+
+      expected = Array.new(8) do |id|
+        offset = id % 3
+        value = (offset.zero? ? 0 : 200) + id
+        Array.new(25, value)
+      end
+
+      expect(results).to eq(expected)
     end
   end
 end
