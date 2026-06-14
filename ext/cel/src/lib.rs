@@ -1,7 +1,11 @@
-use cel::{Context as CelContext, ExecutionError as CelExecutionError, FunctionContext, ParseErrors, Program as CelProgram, ResolveResult, Value as CelValue};
+use cel::{
+    Context as CelContext, ExecutionError as CelExecutionError, FunctionContext, ParseErrors,
+    Program as CelProgram, ResolveResult, Value as CelValue,
+};
 use magnus::block::Proc;
 use magnus::prelude::*;
-use magnus::{function, method, Error, IntoValue, RHash, Ruby, TryConvert, Value};
+use magnus::typed_data::Obj;
+use magnus::{function, method, Error, IntoValue, RHash, RString, Ruby, TryConvert, Value};
 use rb_sys::{rb_thread_call_with_gvl, rb_thread_call_without_gvl};
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -164,6 +168,12 @@ struct ProgramWrap {
     inner: CelProgram,
 }
 
+#[derive(Clone)]
+#[magnus::wrap(class = "CEL::Duration", free_immediately, size)]
+struct DurationWrap {
+    inner: chrono::Duration,
+}
+
 fn ruby_to_cel_value(value: Value) -> Result<CelValue, Error> {
     let ruby = Ruby::get().expect("ruby runtime");
 
@@ -180,17 +190,34 @@ fn ruby_to_cel_value(value: Value) -> Result<CelValue, Error> {
         return Ok(CelValue::Float(<f64 as TryConvert>::try_convert(value)?));
     }
     if value.is_kind_of(ruby.class_string()) {
-        return Ok(CelValue::String(Arc::new(<String as TryConvert>::try_convert(value)?)));
+        let string = <RString as TryConvert>::try_convert(value)?;
+        if string.enc_get() == ruby.ascii8bit_encindex() {
+            return Ok(CelValue::Bytes(Arc::new(unsafe {
+                string.as_slice().to_vec()
+            })));
+        }
+
+        return Ok(CelValue::String(Arc::new(
+            <String as TryConvert>::try_convert(value)?,
+        )));
     }
     if value.is_kind_of(ruby.class_symbol()) {
         let sym = <magnus::Symbol as TryConvert>::try_convert(value)?;
         return Ok(CelValue::String(Arc::new(sym.name()?.to_string())));
     }
+    if value.is_kind_of(ruby.class_time()) {
+        return Ok(CelValue::Timestamp(
+            <chrono::DateTime<chrono::FixedOffset> as TryConvert>::try_convert(value)?,
+        ));
+    }
+    if let Ok(duration) = <Obj<DurationWrap> as TryConvert>::try_convert(value) {
+        return Ok(CelValue::Duration(duration.inner));
+    }
     if value.is_kind_of(ruby.class_array()) {
         let array = <magnus::RArray as TryConvert>::try_convert(value)?;
         let mut out = Vec::with_capacity(array.len());
-        for element in array.each() {
-            out.push(ruby_to_cel_value(element?)?);
+        for element in array.into_iter() {
+            out.push(ruby_to_cel_value(element)?);
         }
         return Ok(CelValue::List(Arc::new(out)));
     }
@@ -207,7 +234,9 @@ fn ruby_to_cel_value(value: Value) -> Result<CelValue, Error> {
             } else if let Ok(b) = <bool as TryConvert>::try_convert(k) {
                 cel::objects::Key::from(b)
             } else {
-                return Err(errors::ty("Hash keys must be String/Symbol/Integer/Boolean"));
+                return Err(errors::ty(
+                    "Hash keys must be String/Symbol/Integer/Boolean",
+                ));
             };
             out.insert(key, ruby_to_cel_value(v)?);
             Ok(magnus::r_hash::ForEach::Continue)
@@ -224,7 +253,14 @@ fn cel_to_ruby(ruby: &Ruby, value: &CelValue) -> Result<Value, Error> {
         CelValue::UInt(v) => (*v).into_value_with(ruby),
         CelValue::Float(v) => (*v).into_value_with(ruby),
         CelValue::String(v) => v.to_string().into_value_with(ruby),
+        CelValue::Bytes(v) => ruby
+            .enc_str_new(v.as_slice(), ruby.ascii8bit_encoding())
+            .into_value_with(ruby),
         CelValue::Bool(v) => (*v).into_value_with(ruby),
+        CelValue::Duration(v) => ruby
+            .obj_wrap(DurationWrap { inner: *v })
+            .into_value_with(ruby),
+        CelValue::Timestamp(v) => (*v).into_value_with(ruby),
         CelValue::Null => ruby.qnil().as_value(),
         CelValue::List(v) => {
             let ary = ruby.ary_new();
@@ -246,8 +282,53 @@ fn cel_to_ruby(ruby: &Ruby, value: &CelValue) -> Result<Value, Error> {
             }
             hash.into_value_with(ruby)
         }
-        _ => return Err(errors::ty(format!("Unsupported CEL value variant: {value:?}"))),
+        _ => {
+            return Err(errors::ty(format!(
+                "Unsupported CEL value variant: {value:?}"
+            )))
+        }
     })
+}
+
+impl DurationWrap {
+    fn new(seconds: f64) -> Result<Self, Error> {
+        if !seconds.is_finite() {
+            return Err(errors::ty("Duration seconds must be finite"));
+        }
+
+        let nanos = (seconds * 1_000_000_000.0).round();
+        if nanos < i64::MIN as f64 || nanos > i64::MAX as f64 {
+            return Err(errors::ty("Duration is out of range"));
+        }
+
+        Ok(Self {
+            inner: chrono::Duration::nanoseconds(nanos as i64),
+        })
+    }
+
+    fn total_seconds(&self) -> f64 {
+        let nanos = self.inner.num_nanoseconds().unwrap_or_else(|| {
+            if self.inner < chrono::Duration::zero() {
+                i64::MIN
+            } else {
+                i64::MAX
+            }
+        });
+
+        nanos as f64 / 1_000_000_000.0
+    }
+
+    fn to_s(&self) -> String {
+        format!("{}s", self.total_seconds())
+    }
+
+    fn inspect(&self) -> String {
+        format!("#<CEL::Duration {}>", self.to_s())
+    }
+
+    fn eq(&self, other: Obj<DurationWrap>) -> bool {
+        self.inner == other.inner
+    }
 }
 
 impl ContextWrap {
@@ -302,11 +383,9 @@ impl ContextWrap {
                         let mut ruby_args = Vec::new();
 
                         if let Some(target) = this {
-                            ruby_args.push(
-                                cel_to_ruby(&ruby, &target).map_err(|e| {
-                                    CelExecutionError::function_error(ftx.name, e.to_string())
-                                })?,
-                            );
+                            ruby_args.push(cel_to_ruby(&ruby, &target).map_err(|e| {
+                                CelExecutionError::function_error(ftx.name, e.to_string())
+                            })?);
                         }
 
                         for arg in args.iter() {
@@ -315,12 +394,13 @@ impl ContextWrap {
                             })?);
                         }
 
-                        let proc_result = callback.proc.call(ruby_args.as_slice()).map_err(|e| {
-                            CelExecutionError::function_error(
-                                ftx.name,
-                                format!("Ruby callback error: {e}"),
-                            )
-                        })?;
+                        let proc_result =
+                            callback.proc.call(ruby_args.as_slice()).map_err(|e| {
+                                CelExecutionError::function_error(
+                                    ftx.name,
+                                    format!("Ruby callback error: {e}"),
+                                )
+                            })?;
 
                         ruby_to_cel_value(proc_result)
                             .map_err(|e| CelExecutionError::function_error(ftx.name, e.to_string()))
@@ -395,10 +475,21 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     context_class.define_method("[]=", method!(ContextWrap::add_variable, 2))?;
     context_class.define_method("add_function", method!(ContextWrap::add_function, 2))?;
 
+    let duration_class = module.define_class("Duration", ruby.class_object())?;
+    duration_class.define_singleton_method("new", function!(DurationWrap::new, 1))?;
+    duration_class.define_method("total_seconds", method!(DurationWrap::total_seconds, 0))?;
+    duration_class.define_method("to_f", method!(DurationWrap::total_seconds, 0))?;
+    duration_class.define_method("to_s", method!(DurationWrap::to_s, 0))?;
+    duration_class.define_method("inspect", method!(DurationWrap::inspect, 0))?;
+    duration_class.define_method("==", method!(DurationWrap::eq, 1))?;
+
     let program_class = module.define_class("Program", ruby.class_object())?;
     program_class.define_singleton_method("compile", function!(ProgramWrap::compile, 1))?;
     program_class.define_method("execute", method!(ProgramWrap::execute, 0))?;
-    program_class.define_method("execute_with_context", method!(ProgramWrap::execute_with_context, 1))?;
+    program_class.define_method(
+        "execute_with_context",
+        method!(ProgramWrap::execute_with_context, 1),
+    )?;
     program_class.define_method("references", method!(ProgramWrap::references, 0))?;
     program_class.define_method("expression", method!(ProgramWrap::expression, 0))?;
 

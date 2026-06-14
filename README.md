@@ -39,6 +39,7 @@ program.execute(context)
 - `CEL::Context.new(empty = false)` -> context with builtins (`false`) or empty (`true`)
 - `CEL::Context#add_variable(name, value)`
 - `CEL::Context#define_function(name) { |*args| ... }`
+- `CEL::Duration.new(seconds)` -> duration value for context variables and duration results
 
 ## Type support
 
@@ -49,6 +50,9 @@ program.execute(context)
 - `Integer` -> `int`
 - `Float` -> `double`
 - `String` / `Symbol` -> `string`
+- binary `String` (`ASCII-8BIT`, e.g. `"abc".b`) -> `bytes`
+- `Time` -> `timestamp`
+- `CEL::Duration` -> `duration`
 - `Array` -> `list`
 - `Hash` with keys `String|Symbol|Integer|Boolean` -> `map`
 
@@ -56,6 +60,9 @@ program.execute(context)
 
 - `null` -> `nil`
 - scalar primitives map naturally
+- `bytes` -> binary Ruby `String`
+- `timestamp` -> `Time`
+- `duration` -> `CEL::Duration`
 - `list` -> `Array`
 - `map` -> `Hash`
 
@@ -80,8 +87,8 @@ Uses [mise](https://mise.jdx.dev/) for versions:
 
 ```toml
 [tools]
-ruby = "3.4.8"
-rust = "stable"
+ruby = "4.0"
+rust = "1.96.0"
 ```
 
 ### Test + lint
@@ -95,6 +102,8 @@ This runs:
 - `standard` (format/lint)
 - native extension compile
 - `rspec`
+
+CI also runs the test suite on Ruby 3.3, Ruby 3.4, and Ruby 4.0 through Buildkite.
 
 ## Compatibility notes
 

@@ -12,7 +12,7 @@ Gem::Specification.new do |spec|
   spec.description = "Robust Ruby bindings to the Rust CEL implementation using Magnus"
   spec.homepage = "https://github.com/catkins/cel-rs-rb"
   spec.license = "MIT"
-  spec.required_ruby_version = ">= 3.2.0"
+  spec.required_ruby_version = ">= 3.3.0"
 
   spec.metadata["homepage_uri"] = spec.homepage
   spec.metadata["source_code_uri"] = "https://github.com/catkins/cel-rs-rb"
@@ -31,10 +31,11 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
   spec.extensions = ["ext/cel/extconf.rb"]
 
-  spec.add_dependency "rb_sys", "~> 0.9"
+  spec.add_dependency "rb_sys", "~> 0.9.128"
 
-  spec.add_development_dependency "rake", "~> 13.0"
-  spec.add_development_dependency "rake-compiler", "~> 1.2"
-  spec.add_development_dependency "rspec", "~> 3.12"
-  spec.add_development_dependency "standard", "~> 1.45"
+  spec.add_development_dependency "rake", "~> 13.4"
+  spec.add_development_dependency "rake-compiler", "~> 1.3"
+  spec.add_development_dependency "rspec", "~> 3.13"
+  spec.add_development_dependency "simplecov", "~> 0.22"
+  spec.add_development_dependency "standard", "~> 1.55"
 end

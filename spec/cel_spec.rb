@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "spec_helper"
+require "time"
 
 RSpec.describe CEL do
   describe ".compile" do
@@ -32,6 +33,18 @@ RSpec.describe CEL do
       expect(CEL.compile("name.startsWith('c')").execute(context)).to eq(true)
       expect(CEL.compile("ary[2]").execute(context)).to eq(3)
       expect(CEL.compile("obj.a + obj.b").execute(context)).to eq(3)
+    end
+
+    it "supports ruby values for CEL bytes, timestamp, and duration types" do
+      context = CEL::Context.build(
+        bytes: "abc".b,
+        at: Time.utc(2023, 5, 29),
+        delay: CEL::Duration.new(90)
+      )
+
+      expect(CEL.compile("bytes == b'abc'").execute(context)).to eq(true)
+      expect(CEL.compile("at == timestamp('2023-05-29T00:00:00Z')").execute(context)).to eq(true)
+      expect(CEL.compile("delay == duration('90s')").execute(context)).to eq(true)
     end
 
     it "registers ruby functions and supports variadic calls" do
@@ -78,6 +91,21 @@ RSpec.describe CEL do
       tests.each do |expr, expected|
         expect(CEL.compile(expr).execute).to eq(expected)
       end
+    end
+
+    it "marshals current CEL scalar value variants back to ruby" do
+      bytes = CEL.compile("b'abc'").execute
+      expect(bytes).to eq("abc".b)
+      expect(bytes.encoding).to eq(Encoding::ASCII_8BIT)
+
+      timestamp = CEL.compile("timestamp('2023-05-29T00:00:00Z')").execute
+      expect(timestamp).to be_a(Time)
+      expect(timestamp.getutc.iso8601).to eq("2023-05-29T00:00:00Z")
+
+      duration = CEL.compile("duration('1m30s')").execute
+      expect(duration).to be_a(CEL::Duration)
+      expect(duration.total_seconds).to eq(90.0)
+      expect(duration).to eq(CEL::Duration.new(90))
     end
 
     it "returns execution errors as CEL::ExecutionError" do
