@@ -1,5 +1,5 @@
 agents:
-  queue: hosted-linux
+  queue: hosted
 
 cache: ".buildkite/cache-volume"
 
