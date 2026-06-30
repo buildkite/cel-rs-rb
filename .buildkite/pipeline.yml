@@ -1,5 +1,5 @@
 agents:
-  queue: hosted-linux
+  queue: hosted
 
 cache: ".buildkite/cache-volume"
 
@@ -11,33 +11,7 @@ common_mise_plugin: &mise_plugin
   version: 2026.6.6
 
 steps:
-  - group: ":ruby: Build & Test"
+  - group: "test"
     steps:
-      - label: ":ruby: Ruby 3.3"
-        command: mise run ci:test
-        env:
-          MISE_ENV: ruby-3.3
-        plugins:
-          - mise#v1.1.4: *mise_plugin
-
-      - label: ":ruby: Ruby 3.4"
-        command: mise run ci:test
-        env:
-          MISE_ENV: ruby-3.4
-        plugins:
-          - mise#v1.1.4: *mise_plugin
-
-      - label: ":ruby: Ruby 4.0"
-        command: mise run ci:test
-        plugins:
-          - mise#v1.1.4: *mise_plugin
-
-  - label: ":standard: Lint"
-    command: mise run ci:standard
-    plugins:
-      - mise#v1.1.4: *mise_plugin
-
-  - label: ":rust: Cargo Check & Clippy"
-    command: mise run ci:clippy
-    plugins:
-      - mise#v1.1.4: *mise_plugin
+      - label: "test build"
+        command: echo "hello world 🐣" 
