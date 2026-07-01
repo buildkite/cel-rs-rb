@@ -114,9 +114,10 @@ CI also runs the test suite on Ruby 3.3, Ruby 3.4, and Ruby 4.0 through Buildkit
 
 ## Releasing
 
-Releases publish **precompiled native gems** for five platforms
-(`x86_64-linux`, `aarch64-linux`, `x86_64-linux-musl`, `arm64-darwin`,
-`x86_64-darwin`) to [rubygems.org](https://rubygems.org/gems/cel-rs-rb).
+Releases publish **precompiled native gems** for six platforms
+(`x86_64-linux`, `aarch64-linux`, `x86_64-linux-musl`, `aarch64-linux-musl`,
+`arm64-darwin`, `x86_64-darwin`) to
+[rubygems.org](https://rubygems.org/gems/cel-rs-rb).
 
 ### Cutting a release
 
