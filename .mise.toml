@@ -76,6 +76,20 @@ mise run clippy
 description = "Run Standard in CI"
 run = "mise run standard"
 
+[tasks."release:verify-tag"]
+description = "Fail unless the git tag (BUILDKITE_TAG) matches CEL::VERSION"
+run = """
+tag="${BUILDKITE_TAG:-}"
+test -n "$tag" || { echo "No BUILDKITE_TAG set; skipping tag/version check" >&2; exit 0; }
+version="$(ruby -r ./lib/cel/version -e 'print CEL::VERSION')"
+expected="v${version}"
+if [ "$tag" != "$expected" ]; then
+  echo "Tag/version mismatch: tag '$tag' but version.rb is '$version' (expected tag '$expected')" >&2
+  exit 1
+fi
+echo "OK: tag '$tag' matches version.rb ('$version')"
+"""
+
 [tasks."release:build-gem"]
 description = "Cross-compile a native gem for RELEASE_PLATFORM"
 run = """

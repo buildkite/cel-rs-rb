@@ -11,6 +11,13 @@ common_mise_plugin: &mise_plugin
   version: 2026.6.6
 
 steps:
+  - label: ":semver: Verify tag matches version.rb"
+    key: verify-tag
+    if: build.tag != null
+    command: mise run release:verify-tag
+    plugins:
+      - mise#v1.1.4: *mise_plugin
+
   - group: ":package: Native gems"
     key: native-gems
     steps:
