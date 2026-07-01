@@ -53,4 +53,5 @@ steps:
       mise run release:publish-gems
     plugins:
       - mise#v1.1.4: *mise_plugin
-      # rubygems-oidc role added in Phase 5
+      - rubygems-oidc#v0.2.0:
+          role: rg_oidc_akr_r6thqg88pvavbjycrh8h
