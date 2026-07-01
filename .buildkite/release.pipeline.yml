@@ -1,5 +1,5 @@
 agents:
-  queue: oss-deploy
+  queue: hosted
 
 cache: ".buildkite/cache-volume"
 
