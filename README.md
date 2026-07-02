@@ -112,6 +112,33 @@ This runs:
 
 CI also runs the test suite on Ruby 3.3, Ruby 3.4, and Ruby 4.0 through Buildkite.
 
+## Releasing
+
+Releases publish **precompiled native gems** for six platforms
+(`x86_64-linux`, `aarch64-linux`, `x86_64-linux-musl`, `aarch64-linux-musl`,
+`arm64-darwin`, `x86_64-darwin`) to
+[rubygems.org](https://rubygems.org/gems/cel-rs-rb).
+
+### Cutting a release
+
+The gem version comes from `lib/cel/version.rb`, not from the tag, so bump the
+file and tag the same version:
+
+```bash
+# 1. Bump CEL::VERSION in lib/cel/version.rb (e.g. "0.2.0")
+# 2. Commit the bump
+git commit -am "Release v0.2.0"
+
+# 3. Tag that commit (the v-prefix triggers the release pipeline)
+git tag v0.2.0
+git push origin main
+git push origin v0.2.0
+```
+
+The `release:verify-tag` step fails the build if the tag and
+`CEL::VERSION` disagree, so the tag (`v0.2.0`) must match `version.rb`
+(`0.2.0`).
+
 ## Compatibility notes
 
 - Some CEL value variants (e.g. opaque custom Rust types) cannot be fully marshaled to Ruby and raise `CEL::TypeError`.

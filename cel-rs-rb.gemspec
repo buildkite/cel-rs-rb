@@ -10,12 +10,12 @@ Gem::Specification.new do |spec|
 
   spec.summary = "Ruby bindings for the Rust CEL crate"
   spec.description = "Robust Ruby bindings to the Rust CEL implementation using Magnus"
-  spec.homepage = "https://github.com/catkins/cel-rs-rb"
+  spec.homepage = "https://github.com/buildkite/cel-rs-rb"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.3.0"
 
   spec.metadata["homepage_uri"] = spec.homepage
-  spec.metadata["source_code_uri"] = "https://github.com/catkins/cel-rs-rb"
+  spec.metadata["source_code_uri"] = "https://github.com/buildkite/cel-rs-rb"
   spec.metadata["rubygems_mfa_required"] = "true"
 
   spec.files = Dir[
