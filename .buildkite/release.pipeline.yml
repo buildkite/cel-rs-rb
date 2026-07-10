@@ -37,6 +37,15 @@ steps:
         plugins:
           - mise#v1.1.4: *mise_plugin
 
+  - label: ":package: ruby gem"
+    key: ruby-gem
+    command: |
+      mise run release:build-ruby-gem
+      version="$(ruby -r ./lib/cel/version -e 'print CEL::VERSION')"
+      buildkite-agent artifact upload "pkg/cel-rs-rb-${version}.gem"
+    plugins:
+      - mise#v1.1.4: *mise_plugin
+
   - label: ":mac: Smoke install arm64-darwin gem"
     key: macos-smoke
     depends_on: native-gems

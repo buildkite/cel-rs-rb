@@ -98,6 +98,14 @@ bundle exec rb-sys-dock --platform "$RELEASE_PLATFORM" --ruby-versions "3.3,3.4,
 """
 depends = ["deps"]
 
+[tasks."release:build-ruby-gem"]
+description = "Build the generic ruby-platform gem"
+run = """
+rm -f pkg/*.gem
+bundle exec rake build
+"""
+depends = ["deps"]
+
 [tasks."release:smoke-install-gem"]
 description = "Install a built gem and verify it loads"
 run = """
