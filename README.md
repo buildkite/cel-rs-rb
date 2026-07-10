@@ -126,14 +126,21 @@ file and tag the same version:
 
 ```bash
 # 1. Bump CEL::VERSION in lib/cel/version.rb (e.g. "0.2.0")
-# 2. Commit the bump
-git commit -am "Release v0.2.0"
+# 2. Refresh Gemfile.lock's local gem version
+bundle install
 
-# 3. Tag that commit (the v-prefix triggers the release pipeline)
+# 3. Commit the bump
+git add lib/cel/version.rb Gemfile.lock
+git commit -m "Release v0.2.0"
+
+# 4. Tag that commit (the v-prefix triggers the release pipeline)
 git tag v0.2.0
 git push origin main
 git push origin v0.2.0
 ```
+
+`Gemfile.lock` includes a local `cel-rs-rb` path entry, so commit its version
+change alongside `lib/cel/version.rb`.
 
 The `release:verify-tag` step fails the build if the tag and
 `CEL::VERSION` disagree, so the tag (`v0.2.0`) must match `version.rb`
