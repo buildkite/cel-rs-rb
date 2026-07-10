@@ -118,8 +118,8 @@ Releases publish a generic `ruby` platform gem and **precompiled native gems**
 for six platforms (`x86_64-linux`, `aarch64-linux`, `x86_64-linux-musl`,
 `aarch64-linux-musl`, `arm64-darwin`, `x86_64-darwin`) to
 [rubygems.org](https://rubygems.org/gems/cel-rs-rb). The generic gem keeps
-RubyGems' latest-version metadata aligned and gives unsupported platforms a
-source-build fallback.
+RubyGems' latest-version metadata aligned; supported platforms should still
+resolve to their matching precompiled native gem.
 
 ### Cutting a release
 
