@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    cel-rs-rb (0.1.0)
+    cel-rs-rb (0.2.0)
       rb_sys (~> 0.9.128)
 
 GEM
