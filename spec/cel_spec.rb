@@ -63,6 +63,31 @@ RSpec.describe CEL do
       expect(CEL.compile("'hello'.startsWith('he')").execute(context)).to eq(true)
     end
 
+    it "marshals callback receivers, arguments, and results" do
+      context = CEL::Context.build(prefix: {"label" => "result"})
+      context.define_function("combine") do |target, values, suffix|
+        {target["label"] => values + [suffix]}
+      end
+
+      expect(CEL.compile("prefix.combine([2, 5], 9)").execute(context)).to eq("result" => [2, 5, 9])
+    end
+
+    it "reports builtin callback conflicts when building the execution context" do
+      context = CEL::Context.new
+      context.define_function("size") { |_| 99 }
+
+      expect { CEL.compile("size([1, 2])").execute(context) }
+        .to raise_error(CEL::ExecutionError, /size/)
+    end
+
+    it "replaces callbacks with the same name" do
+      context = CEL::Context.new
+      context.define_function("adjust") { |value| value + 1 }
+      context.define_function("adjust") { |value| value + 7 }
+
+      expect(CEL.compile("adjust(3)").execute(context)).to eq(10)
+    end
+
     it "raises clear type error for unsupported variable types" do
       context = CEL::Context.new
       expect { context.add_variable("bad", Object.new) }.to raise_error(CEL::TypeError)
@@ -77,6 +102,36 @@ RSpec.describe CEL do
       expect(refs["functions"]).to include("size")
     end
 
+    it "registers max and min by default" do
+      tests = {
+        "max(2, 9, -3)" => 9,
+        "min(2, 9, -3)" => -3,
+        "max([2, 9, -3])" => 9,
+        "min([2, 9, -3])" => -3,
+        "max()" => nil,
+        "min([])" => nil
+      }
+
+      [nil, CEL::Context.new].each do |context|
+        tests.each do |expression, expected|
+          expect(CEL.compile(expression).execute(context)).to eq(expected)
+        end
+      end
+    end
+
+    it "leaves max and min out of empty contexts and allows custom callbacks" do
+      ["max", "min"].each do |name|
+        program = CEL.compile("#{name}(2, 9)")
+        empty = CEL::Context.new(true)
+        expect { program.execute(empty) }.to raise_error(CEL::ExecutionError)
+
+        [empty, CEL::Context.new].each do |context|
+          context.define_function(name) { |a, b| a + b }
+          expect(program.execute(context)).to eq(11)
+        end
+      end
+    end
+
     it "ports core CEL suite behavior examples" do
       tests = {
         "size([1,2,3]) == 3" => true,
@@ -84,8 +139,13 @@ RSpec.describe CEL do
         "[1,2,3].filter(x, x > 1)" => [2, 3],
         "[1,2,3].exists(x, x == 2)" => true,
         "[1,2,3].all(x, x > 0)" => true,
-        "{'a': 1}.contains('a')" => true,
-        "optional.of(1).hasValue()" => true
+        "'a' in {'a': 1}" => true,
+        "optional.of(1).hasValue()" => true,
+        "size('café😊')" => 5,
+        "{'name': 'Ada'}.?name.optMap(n, n.size()).orValue(0)" => 3,
+        "{}.?name.optMap(n, n.size()).orValue(0)" => 0,
+        "{'user': {'name': 'Ada'}}.?user.optFlatMap(u, u.?name).orValue('missing')" => "Ada",
+        "[2, 1].exists(e, 6 / (2 - e) == 6)" => true
       }
 
       tests.each do |expr, expected|
@@ -111,6 +171,10 @@ RSpec.describe CEL do
     it "returns execution errors as CEL::ExecutionError" do
       program = CEL.compile("1 / 0")
       expect { program.execute }.to raise_error(CEL::ExecutionError)
+    end
+
+    it "rejects duplicate map literal keys" do
+      expect { CEL.compile("{'a': 1, 'a': 2}").execute }.to raise_error(CEL::ExecutionError)
     end
 
     it "releases GVL so other ruby threads can progress" do
