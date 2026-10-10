@@ -359,7 +359,12 @@ impl ContextWrap {
         let mut ctx = if self.use_empty {
             CelContext::empty()
         } else {
-            CelContext::default()
+            let mut ctx = CelContext::default();
+            ctx.add_function("max", cel::functions::max)
+                .map_err(|e| errors::execution(e.to_string()))?;
+            ctx.add_function("min", cel::functions::min)
+                .map_err(|e| errors::execution(e.to_string()))?;
+            ctx
         };
 
         for (name, value) in self.variables.lock().unwrap().iter() {
@@ -427,7 +432,7 @@ impl ProgramWrap {
     }
 
     fn execute(&self) -> Result<Value, Error> {
-        self.execute_with_context_internal(&CelContext::default())
+        self.execute_with_context(&ContextWrap::new(false))
     }
 
     fn execute_with_context(&self, context: &ContextWrap) -> Result<Value, Error> {

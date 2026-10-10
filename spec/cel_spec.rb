@@ -102,6 +102,36 @@ RSpec.describe CEL do
       expect(refs["functions"]).to include("size")
     end
 
+    it "registers max and min by default" do
+      tests = {
+        "max(2, 9, -3)" => 9,
+        "min(2, 9, -3)" => -3,
+        "max([2, 9, -3])" => 9,
+        "min([2, 9, -3])" => -3,
+        "max()" => nil,
+        "min([])" => nil
+      }
+
+      [nil, CEL::Context.new].each do |context|
+        tests.each do |expression, expected|
+          expect(CEL.compile(expression).execute(context)).to eq(expected)
+        end
+      end
+    end
+
+    it "leaves max and min out of empty contexts and allows custom callbacks" do
+      ["max", "min"].each do |name|
+        program = CEL.compile("#{name}(2, 9)")
+        empty = CEL::Context.new(true)
+        expect { program.execute(empty) }.to raise_error(CEL::ExecutionError)
+
+        [empty, CEL::Context.new].each do |context|
+          context.define_function(name) { |a, b| a + b }
+          expect(program.execute(context)).to eq(11)
+        end
+      end
+    end
+
     it "ports core CEL suite behavior examples" do
       tests = {
         "size([1,2,3]) == 3" => true,
