@@ -166,6 +166,7 @@ struct ContextWrap {
 #[magnus::wrap(class = "CEL::Program", free_immediately, size)]
 struct ProgramWrap {
     inner: CelProgram,
+    env: Arc<cel::Env>,
 }
 
 #[derive(Clone)]
@@ -355,11 +356,11 @@ impl ContextWrap {
         });
     }
 
-    fn build_context(&self) -> Result<CelContext<'static, 'static>, Error> {
+    fn build_context(&self, env: Arc<cel::Env>) -> Result<CelContext<'static, 'static>, Error> {
         let mut ctx = if self.use_empty {
             CelContext::empty()
         } else {
-            let mut ctx = CelContext::default();
+            let mut ctx = CelContext::with_env(env);
             ctx.add_function("max", cel::functions::max)
                 .map_err(|e| errors::execution(e.to_string()))?;
             ctx.add_function("min", cel::functions::min)
@@ -424,10 +425,28 @@ impl ContextWrap {
 }
 
 impl ProgramWrap {
-    fn compile(source: String) -> Result<Self, Error> {
-        cel::Env::stdlib()
-            .compile(&source)
-            .map(|inner| Self { inner })
+    fn compile(source: String, extensions: Vec<String>) -> Result<Self, Error> {
+        let ruby = Ruby::get().expect("ruby runtime");
+        let mut env = cel::Env::stdlib();
+        for name in extensions {
+            let extension = match name.as_str() {
+                "strings" => cel::extensions::strings,
+                "lists" => cel::extensions::lists,
+                "math" => cel::extensions::math,
+                "encoders" => cel::extensions::encoders,
+                _ => {
+                    return Err(Error::new(
+                        ruby.exception_arg_error(),
+                        format!("Unknown CEL extension: {name}"),
+                    ))
+                }
+            };
+            env.add_extension(extension)
+                .map_err(|e| Error::new(ruby.exception_arg_error(), e.to_string()))?;
+        }
+        let env = Arc::new(env);
+        env.compile(&source)
+            .map(|inner| Self { inner, env })
             .map_err(|e: ParseErrors| errors::parse(e.to_string()))
     }
 
@@ -436,7 +455,7 @@ impl ProgramWrap {
     }
 
     fn execute_with_context(&self, context: &ContextWrap) -> Result<Value, Error> {
-        self.execute_with_context_internal(&context.build_context()?)
+        self.execute_with_context_internal(&context.build_context(self.env.clone())?)
     }
 
     fn execute_with_context_internal(&self, ctx: &CelContext<'_, '_>) -> Result<Value, Error> {
@@ -495,7 +514,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     duration_class.define_method("==", method!(DurationWrap::eq, 1))?;
 
     let program_class = module.define_class("Program", ruby.class_object())?;
-    program_class.define_singleton_method("compile", function!(ProgramWrap::compile, 1))?;
+    program_class.define_singleton_method("compile", function!(ProgramWrap::compile, 2))?;
     program_class.define_method("execute", method!(ProgramWrap::execute, 0))?;
     program_class.define_method(
         "execute_with_context",
@@ -503,8 +522,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     )?;
     program_class.define_method("references", method!(ProgramWrap::references, 0))?;
     program_class.define_method("expression", method!(ProgramWrap::expression, 0))?;
-
-    module.define_singleton_method("compile", function!(ProgramWrap::compile, 1))?;
 
     Ok(())
 }

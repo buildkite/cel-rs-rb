@@ -13,6 +13,49 @@ RSpec.describe CEL do
     it "raises parse errors for invalid programs" do
       expect { CEL.compile("1 +") }.to raise_error(CEL::ParseError)
     end
+
+    it "enables each upstream extension for compilation and execution" do
+      tests = {
+        strings: ["'TacoCat'.lowerAscii()", "tacocat"],
+        lists: ["[{'n': 8}, {'n': 2}, {'n': 5}].sortBy(x, x.n).map(x, x.n)", [2, 5, 8]],
+        math: ["math.greatest(2, 9, -3)", 9],
+        encoders: ["base64.encode(b'hi')", "aGk="]
+      }
+
+      tests.each do |extension, (expression, expected)|
+        program = CEL.compile(expression, extensions: [extension])
+        expect(program.execute).to eq(expected)
+        expect(program.execute(CEL::Context.new)).to eq(expected)
+      end
+    end
+
+    it "combines extensions with context variables and Ruby callbacks" do
+      context = CEL::Context.build(label: "TacoCat", scores: [2, 9, -3]) do |ctx|
+        ctx.define_function("decorate") { |value| "[#{value}]" }
+      end
+      program = CEL::Program.compile(
+        "[decorate(label.lowerAscii()), scores.sort(), math.greatest(scores), base64.encode(b'hi')]",
+        extensions: ["strings", "lists", "math", "encoders"]
+      )
+
+      expect(program.execute(context)).to eq(["[tacocat]", [-3, 2, 9], 9, "aGk="])
+    end
+
+    it "keeps extensions local to a program and excludes them from empty contexts" do
+      context = CEL::Context.new
+      enabled = CEL.compile("'ABC'.lowerAscii()", extensions: [:strings])
+      expect(enabled.execute(context)).to eq("abc")
+      expect { CEL.compile("'ABC'.lowerAscii()").execute(context) }.to raise_error(CEL::ExecutionError)
+      expect { enabled.execute(CEL::Context.new(true)) }.to raise_error(CEL::ExecutionError)
+
+      context.define_function("lowerAscii") { |value| value }
+      expect { enabled.execute(context) }.to raise_error(CEL::ExecutionError, /lowerAscii/)
+    end
+
+    it "rejects unknown and repeated extension registrations" do
+      expect { CEL.compile("1", extensions: [:unknown]) }.to raise_error(ArgumentError, /unknown/)
+      expect { CEL.compile("1", extensions: [:strings, "strings"]) }.to raise_error(ArgumentError)
+    end
   end
 
   describe CEL::Context do

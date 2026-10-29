@@ -59,11 +59,42 @@ return `nil` when given no values:
 CEL.compile("max(2, 9, -3)").execute   # => 9
 CEL.compile("min([2, 9, -3])").execute # => -3
 CEL.compile("max([])").execute         # => nil
+```
+
+### Extension libraries
+
+Opt into upstream CEL extension libraries when compiling a program:
+
+```ruby
+program = CEL.compile(
+  "[label.lowerAscii(), scores.sort(), math.greatest(scores), base64.encode(b'hi')]",
+  extensions: [:strings, :lists, :math, :encoders]
+)
+program.execute(CEL::Context.build(label: "TacoCat", scores: [2, 9, -3]))
+# => ["tacocat", [-3, 2, 9], 9, "aGk="]
+```
+
+| Library | Examples |
+| --- | --- |
+| `strings` | `'TacoCat'.lowerAscii()`, `'a,b'.split(',')` |
+| `lists` | `lists.range(3)`, `[3, 1, 2].sort()`, `items.sortBy(x, x.score)` |
+| `math` | `math.greatest(1, 5, 3)`, `math.least([1, 5, 3])` |
+| `encoders` | `base64.encode(b'hi')`, `base64.decode('aGk=')` |
+
+`CEL::Program.compile` accepts the same `extensions:` option. Names can be
+symbols or strings; unknown or repeated names raise `ArgumentError`.
+
+Extensions are disabled by default and registered per program, for both macro
+expansion and execution. They work with bare `execute` or a default context,
+including its variables and Ruby callbacks. They do not change other programs
+or add functions to explicitly empty contexts. Ruby callbacks that conflict
+with enabled extension functions raise `CEL::ExecutionError` during execution,
+just like conflicts with standard CEL builtins.
 
 ### API mapping
 
-- `CEL.compile(source)` -> `CEL::Program`
-- `CEL::Program.compile(source)` -> `CEL::Program`
+- `CEL.compile(source, extensions: [])` -> `CEL::Program`
+- `CEL::Program.compile(source, extensions: [])` -> `CEL::Program`
 - `CEL::Program#execute(context = nil)` -> Ruby value
 - `CEL::Program#references` -> `{ "variables" => [...], "functions" => [...] }`
 - `CEL::Context.new(empty = false)` -> context with builtins (`false`) or empty (`true`)
@@ -179,7 +210,7 @@ The `release:verify-tag` step fails the build if the tag and
 ## Compatibility notes
 
 - Compilation uses the standard CEL environment, including optional access syntax (`user.?name`) and the `optMap` / `optFlatMap` macros.
-- The upstream strings, lists, math, and encoders extension libraries are not enabled. There is no Ruby API to register them yet, so upstream examples using functions such as `math.greatest` or `base64.encode` do not work unchanged.
+- The upstream strings, lists, math, and encoders extension libraries are opt-in through the `extensions:` compile option.
 - cel 0.15 no longer includes `max` and `min` by default, so default contexts register them for compatibility with cel 0.13. See [`max` and `min`](#max-and-min).
 - When upgrading from cel 0.13, replace list/map `.contains(value)` expressions with `value in collection`; `.contains()` now only accepts strings. Map literals with duplicate keys raise `CEL::ExecutionError`, and string `size()` counts Unicode code points rather than bytes. See the [cel 0.15 release notes](https://github.com/cel-rust/cel-rust/releases/tag/v0.15.0) for further CEL semantic changes.
 - `string(bytes)` now rejects invalid UTF-8. Numeric conversions reject out-of-range results, and parsed timestamps and durations must fit CEL's allowed ranges.
