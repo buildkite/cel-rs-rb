@@ -10,6 +10,10 @@ rescue LoadError
 end
 
 module CEL
+  def self.compile(source, extensions: [])
+    Program.compile(source, extensions: extensions)
+  end
+
   class Context
     class << self
       alias_method :__native_new, :new
@@ -34,6 +38,14 @@ module CEL
   end
 
   class Program
+    class << self
+      alias_method :__native_compile, :compile
+
+      def compile(source, extensions: [])
+        __native_compile(source, extensions.map(&:to_s))
+      end
+    end
+
     alias_method :__native_execute, :execute
 
     def execute(context = nil)
