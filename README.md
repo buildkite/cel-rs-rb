@@ -50,6 +50,16 @@ Unwrap optional values inside CEL with `orValue` or `value()` before returning
 them to Ruby. Returning an optional directly raises `CEL::TypeError`; it is not
 automatically converted to its contained value or `nil`.
 
+### `max` and `min`
+
+Default contexts include `max` and `min`. They take a list or positional arguments and
+return `nil` when given no values:
+
+```ruby
+CEL.compile("max(2, 9, -3)").execute   # => 9
+CEL.compile("min([2, 9, -3])").execute # => -3
+CEL.compile("max([])").execute         # => nil
+
 ### API mapping
 
 - `CEL.compile(source)` -> `CEL::Program`
