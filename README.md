@@ -76,10 +76,10 @@ program.execute(CEL::Context.build(label: "TacoCat", scores: [2, 9, -3]))
 
 | Library | Examples |
 | --- | --- |
-| `strings` | `'TacoCat'.lowerAscii()`, `'a,b'.split(',')` |
-| `lists` | `lists.range(3)`, `[3, 1, 2].sort()`, `items.sortBy(x, x.score)` |
-| `math` | `math.greatest(1, 5, 3)`, `math.least([1, 5, 3])` |
-| `encoders` | `base64.encode(b'hi')`, `base64.decode('aGk=')` |
+| [`strings`](https://docs.rs/cel/0.15.0/cel/extensions/fn.strings.html) | `'TacoCat'.lowerAscii()`, `'a,b'.split(',')` |
+| [`lists`](https://docs.rs/cel/0.15.0/cel/extensions/fn.lists.html) | `lists.range(3)`, `[3, 1, 2].sort()`, `items.sortBy(x, x.score)` |
+| [`math`](https://docs.rs/cel/0.15.0/cel/extensions/fn.math.html) | `math.greatest(1, 5, 3)`, `math.least([1, 5, 3])` |
+| [`encoders`](https://docs.rs/cel/0.15.0/cel/extensions/fn.encoders.html) | `base64.encode(b'hi')`, `base64.decode('aGk=')` |
 
 `CEL::Program.compile` accepts the same `extensions:` option. Names can be
 symbols or strings; unknown or repeated names raise `ArgumentError`.
