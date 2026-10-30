@@ -170,7 +170,7 @@ The `release:verify-tag` step fails the build if the tag and
 
 - Compilation uses the standard CEL environment, including optional access syntax (`user.?name`) and the `optMap` / `optFlatMap` macros.
 - The upstream strings, lists, math, and encoders extension libraries are not enabled. There is no Ruby API to register them yet, so upstream examples using functions such as `math.greatest` or `base64.encode` do not work unchanged.
-- Default contexts also register the upstream `max` and `min` functions for compatibility with cel 0.13. They accept a list or positional arguments, return `nil` for no values, and can be replaced by Ruby callbacks. Empty contexts do not register them.
+- cel 0.15 no longer includes `max` and `min` by default, so default contexts register them for compatibility with cel 0.13. See [`max` and `min`](#max-and-min).
 - When upgrading from cel 0.13, replace list/map `.contains(value)` expressions with `value in collection`; `.contains()` now only accepts strings. Map literals with duplicate keys raise `CEL::ExecutionError`, and string `size()` counts Unicode code points rather than bytes. See the [cel 0.15 release notes](https://github.com/cel-rust/cel-rust/releases/tag/v0.15.0) for further CEL semantic changes.
 - `string(bytes)` now rejects invalid UTF-8. Numeric conversions reject out-of-range results, and parsed timestamps and durations must fit CEL's allowed ranges.
 - `all()` and `exists()` can now absorb an earlier evaluation error when a later element determines the result. For example, `[2, 1].exists(e, 6 / (2 - e) == 6)` returns `true` despite the first element's division by zero.
