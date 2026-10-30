@@ -2,7 +2,7 @@
 
 [![Gem Version](https://img.shields.io/gem/v/cel-rs-rb.svg)](https://rubygems.org/gems/cel-rs-rb)
 
-Ruby bindings for the Rust [`cel`](https://crates.io/crates/cel) crate, implemented with [Magnus](https://github.com/matsadler/magnus).
+Ruby bindings for the Rust [`cel`](https://crates.io/crates/cel) 0.15 crate, implemented with [Magnus](https://github.com/matsadler/magnus).
 
 ## Goals
 
@@ -31,6 +31,34 @@ program = CEL.compile("sum(scores[0], scores[1], scores[2])")
 program.execute(context)
 # => 60
 ```
+
+### Optional values
+
+Use optional access to handle missing fields, and `orValue` to supply a default:
+
+```ruby
+context = CEL::Context.build(user: {})
+CEL.compile("user.?name.orValue('unknown')").execute(context)
+# => "unknown"
+
+context = CEL::Context.build(user: {"name" => "Ada"})
+CEL.compile("user.?name.optMap(n, n.size()).orValue(0)").execute(context)
+# => 3
+```
+
+Unwrap optional values inside CEL with `orValue` or `value()` before returning
+them to Ruby. Returning an optional directly raises `CEL::TypeError`; it is not
+automatically converted to its contained value or `nil`.
+
+### `max` and `min`
+
+Default contexts include `max` and `min`. They take a list or positional arguments and
+return `nil` when given no values:
+
+```ruby
+CEL.compile("max(2, 9, -3)").execute   # => 9
+CEL.compile("min([2, 9, -3])").execute # => -3
+CEL.compile("max([])").execute         # => nil
 
 ### API mapping
 
@@ -150,5 +178,12 @@ The `release:verify-tag` step fails the build if the tag and
 
 ## Compatibility notes
 
+- Compilation uses the standard CEL environment, including optional access syntax (`user.?name`) and the `optMap` / `optFlatMap` macros.
+- The upstream strings, lists, math, and encoders extension libraries are not enabled. There is no Ruby API to register them yet, so upstream examples using functions such as `math.greatest` or `base64.encode` do not work unchanged.
+- cel 0.15 no longer includes `max` and `min` by default, so default contexts register them for compatibility with cel 0.13. See [`max` and `min`](#max-and-min).
+- When upgrading from cel 0.13, replace list/map `.contains(value)` expressions with `value in collection`; `.contains()` now only accepts strings. Map literals with duplicate keys raise `CEL::ExecutionError`, and string `size()` counts Unicode code points rather than bytes. See the [cel 0.15 release notes](https://github.com/cel-rust/cel-rust/releases/tag/v0.15.0) for further CEL semantic changes.
+- `string(bytes)` now rejects invalid UTF-8. Numeric conversions reject out-of-range results, and parsed timestamps and durations must fit CEL's allowed ranges.
+- `all()` and `exists()` can now absorb an earlier evaluation error when a later element determines the result. For example, `[2, 1].exists(e, 6 / (2 - e) == 6)` returns `true` despite the first element's division by zero.
+- Ruby callbacks cannot shadow standard CEL builtins (such as `size`) in a default context; the compatibility functions `max` and `min` are exceptions. Conflicts raise `CEL::ExecutionError` when `Program#execute(context)` builds the execution snapshot, even if the expression does not call the conflicting function. Use `CEL::Context.new(true)` or `CEL::Context.build(empty: true)` to define functions without builtins. Registering the same custom callback name again replaces the previous callback.
 - Some CEL value variants (e.g. opaque custom Rust types) cannot be fully marshaled to Ruby and raise `CEL::TypeError`.
 - This project targets broad CEL compatibility, but parity for every Rust-only extension point is still evolving.

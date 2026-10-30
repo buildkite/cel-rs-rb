@@ -355,11 +355,16 @@ impl ContextWrap {
         });
     }
 
-    fn build_context(&self) -> CelContext<'static> {
+    fn build_context(&self) -> Result<CelContext<'static, 'static>, Error> {
         let mut ctx = if self.use_empty {
             CelContext::empty()
         } else {
-            CelContext::default()
+            let mut ctx = CelContext::default();
+            ctx.add_function("max", cel::functions::max)
+                .map_err(|e| errors::execution(e.to_string()))?;
+            ctx.add_function("min", cel::functions::min)
+                .map_err(|e| errors::execution(e.to_string()))?;
+            ctx
         };
 
         for (name, value) in self.variables.lock().unwrap().iter() {
@@ -375,7 +380,11 @@ impl ContextWrap {
                       cel::extractors::Arguments(args): cel::extractors::Arguments|
                       -> ResolveResult {
                     let callback = callback.clone();
-                    let this = ftx.this.clone();
+                    let this = ftx
+                        .this
+                        .as_ref()
+                        .map(|value| CelValue::try_from(value.as_ref()))
+                        .transpose()?;
                     let args = args.clone();
 
                     with_gvl(|| {
@@ -406,29 +415,31 @@ impl ContextWrap {
                             .map_err(|e| CelExecutionError::function_error(ftx.name, e.to_string()))
                     })
                 },
-            );
+            )
+            .map_err(|e| errors::execution(e.to_string()))?;
         }
 
-        ctx
+        Ok(ctx)
     }
 }
 
 impl ProgramWrap {
     fn compile(source: String) -> Result<Self, Error> {
-        CelProgram::compile(&source)
+        cel::Env::stdlib()
+            .compile(&source)
             .map(|inner| Self { inner })
             .map_err(|e: ParseErrors| errors::parse(e.to_string()))
     }
 
     fn execute(&self) -> Result<Value, Error> {
-        self.execute_with_context_internal(&CelContext::default())
+        self.execute_with_context(&ContextWrap::new(false))
     }
 
     fn execute_with_context(&self, context: &ContextWrap) -> Result<Value, Error> {
-        self.execute_with_context_internal(&context.build_context())
+        self.execute_with_context_internal(&context.build_context()?)
     }
 
-    fn execute_with_context_internal(&self, ctx: &CelContext<'_>) -> Result<Value, Error> {
+    fn execute_with_context_internal(&self, ctx: &CelContext<'_, '_>) -> Result<Value, Error> {
         let run = || self.inner.execute(ctx);
         let result = panic::catch_unwind(AssertUnwindSafe(|| without_gvl(run)))
             .map_err(|_| errors::execution("CEL execution panicked"))?;
