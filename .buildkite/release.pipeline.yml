@@ -6,6 +6,7 @@ cache: ".buildkite/cache-volume"
 env:
   MISE_GITHUB_ATTESTATIONS: "false"
   MISE_RUBY_GITHUB_ATTESTATIONS: "false"
+  MISE_RUBY_PRECOMPILED_URL: "https://github.com/jdx/ruby/releases/download/{version}/ruby-{version}.{platform}.tar.gz"
 
 common_mise_plugin: &mise_plugin
   version: 2026.6.6
