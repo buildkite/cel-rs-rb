@@ -2,7 +2,15 @@
 
 [![Gem Version](https://img.shields.io/gem/v/cel-rs-rb.svg)](https://rubygems.org/gems/cel-rs-rb)
 
-Ruby bindings for the Rust [`cel`](https://crates.io/crates/cel) 0.15 crate, implemented with [Magnus](https://github.com/matsadler/magnus).
+Ruby bindings for the Rust [`cel`](https://crates.io/crates/cel) crate,
+implemented with [Magnus](https://github.com/matsadler/magnus).
+
+The beta track follows upstream's default branch through exact Git snapshots.
+The first snapshot, `0.4.0.beta.20261111.1`, includes
+[cel-rust #339](https://github.com/cel-rust/cel-rust/pull/339) and pins
+[upstream head db2afd9](https://github.com/cel-rust/cel-rust/commit/db2afd90cfc6f8bd6c845dc51f43d89b4a133752).
+The gem has its own version line: the next gem release is 0.4.0, while upstream
+still declares its unreleased crate as 0.15.0.
 
 ## Goals
 
@@ -17,6 +25,15 @@ Ruby bindings for the Rust [`cel`](https://crates.io/crates/cel) 0.15 crate, imp
 ```ruby
 gem "cel-rs-rb"
 ```
+
+To opt into the first beta once published, specify
+`gem "cel-rs-rb", "0.4.0.beta.20261111.1"`.
+Ordinary installs continue to select the stable gem; review artifacts are not
+automatically published to RubyGems.
+Building the generic source gem requires Rust, Git, and access to the pinned
+upstream Git repository. Its manifest pins the cel revision even though the
+generic gem does not include the development `Cargo.lock`; transitive crates
+are resolved at installation time.
 
 ## Usage
 
@@ -91,12 +108,50 @@ or add functions to explicitly empty contexts. Ruby callbacks that conflict
 with enabled extension functions raise `CEL::ExecutionError` during execution,
 just like conflicts with standard CEL builtins.
 
+### Evaluation limits and cancellation
+
+Set a comprehension-iteration budget when compiling, and an optional timeout
+(in seconds) or cancellation token for each execution:
+
+```ruby
+program = CEL.compile("items.map(x, x * 2)", max_iterations: 1_000)
+context = CEL::Context.build(items: [2, 5, 9])
+program.execute(context, timeout: 0.05) # => [4, 10, 18]
+
+token = CEL::CancellationToken.new
+token.cancel! # Another Ruby thread can call this while evaluation runs.
+program.execute(context, interrupt: token)
+# raises CEL::ExecutionError: operation interrupted
+```
+
+`max_iterations` is a non-negative 64-bit integer; `0` (the default) disables
+the budget. The budget counts total iterations across nested and sibling
+comprehensions, with a fresh budget for each execution, including concurrent
+executions of one program. It also applies to explicitly empty contexts.
+
+`timeout: nil` and `interrupt: nil` disable interruption by default. Timeouts
+must be finite, non-negative seconds within Rust's duration range. A timeout
+starts before building the execution snapshot; each call gets a fresh deadline.
+Tokens are one-way: `cancelled?` stays true after `cancel!`, and every evaluation
+sharing that token sees the cancellation. Use a new token for an independent run.
+When both options are supplied, either can interrupt execution. `call` and
+`execute_with_context` accept the same execution options.
+
+These checks are **cooperative**, performed on comprehension iterations
+(`all`, `exists`, `map`, `filter`, etc.). They are not hard wall-clock timeouts
+or a general CEL cost limit. Straight-line expressions, extension work outside
+comprehensions, and Ruby callbacks are not preempted; a callback must return
+before CEL can observe cancellation. Once observed, interruption or budget
+exhaustion fails the entire evaluation with `CEL::ExecutionError`, even inside
+`||`, `&&`, or optional accessors.
+
 ### API mapping
 
-- `CEL.compile(source, extensions: [])` -> `CEL::Program`
-- `CEL::Program.compile(source, extensions: [])` -> `CEL::Program`
-- `CEL::Program#execute(context = nil)` -> Ruby value
+- `CEL.compile(source, extensions: [], max_iterations: 0)` -> `CEL::Program`
+- `CEL::Program.compile(source, extensions: [], max_iterations: 0)` -> `CEL::Program`
+- `CEL::Program#execute(context = nil, timeout: nil, interrupt: nil)` -> Ruby value
 - `CEL::Program#references` -> `{ "variables" => [...], "functions" => [...] }`
+- `CEL::CancellationToken.new`, `#cancel!`, `#cancelled?` -> cooperative cancellation
 - `CEL::Context.new(empty = false)` -> context with builtins (`false`) or empty (`true`)
 - `CEL::Context#add_variable(name, value)`
 - `CEL::Context#define_function(name) { |*args| ... }`
@@ -180,35 +235,90 @@ for six platforms (`x86_64-linux`, `aarch64-linux`, `x86_64-linux-musl`,
 RubyGems' latest-version metadata aligned; supported platforms should still
 resolve to their matching precompiled native gem.
 
-### Cutting a release
+### Beta snapshots
 
-The gem version comes from `lib/cel/version.rb`, not from the tag, so bump the
-file and tag the same version:
+Beta versions use `X.Y.Z.beta.YYYYMMDD.N`: `X.Y.Z` is the next intended **gem**
+release, the date is UTC, and `N` starts at 1 and increments for further updates
+on the same day. For example, `0.4.0.beta.20261111.1` and
+`0.4.0.beta.20261111.2` both sort before the eventual stable `0.4.0`.
+The date/counter identifies a review snapshot, not an upstream crate release.
+
+Prepare the next snapshot locally:
 
 ```bash
-# 1. Bump CEL::VERSION in lib/cel/version.rb (e.g. "0.2.0")
-# 2. Refresh Gemfile.lock's local gem version
-bundle install
-
-# 3. Commit the bump
-git add lib/cel/version.rb Gemfile.lock
-git commit -m "Release v0.2.0"
-
-# 4. Tag that commit (the v-prefix triggers the release pipeline)
-git tag v0.2.0
-git push origin main
-git push origin v0.2.0
+mise run beta:update
 ```
 
-`Gemfile.lock` includes a local `cel-rs-rb` path entry, so commit its version
-change alongside `lib/cel/version.rb`.
+This resolves upstream's default-branch HEAD (currently `master`), pins its full
+SHA in `ext/cel/Cargo.toml`, refreshes `Cargo.lock`, bumps `CEL::VERSION`, and
+updates the local path-gem version in `Gemfile.lock`. It verifies the resolved
+Git dependency's SHA, distinguishing it from the extension's own package also
+named `cel`. It never commits, pushes, merges, tags, or publishes.
 
-The `release:verify-tag` step fails the build if the tag and
-`CEL::VERSION` disagree, so the tag (`v0.2.0`) must match `version.rb`
-(`0.2.0`).
+The base defaults to the current gem version's `X.Y.Z`. After a stable release,
+explicitly select the next beta line, for example:
+
+```bash
+BETA_BASE_VERSION=0.5.0 mise run beta:update
+```
+
+Review the complete upstream range, adapt the binding if needed, and run
+`mise run test` and `mise run clippy`. Open an update PR with the four changed
+version/dependency files and any compatibility changes. If either dependency
+resolver fails, inspect the partial working diff before retrying.
+
+The separate upstream monitor owns nightly/recurring refresh requests. This
+repository provides the update command and build path; it creates no schedule,
+listener, automatic merge, or unattended release.
+
+### Buildkite review artifacts
+
+The normal CI pipeline runs the Ruby 3.3/3.4/4.0 matrix, Standard, and Clippy.
+After those pass, `beta:package` uploads `.buildkite/package.pipeline.yml` when
+the checked-out gem version is a prerelease. Stable-version CI skips packaging.
+The package pipeline builds all six native gems plus the source gem, then runs
+the packaged runtime RSpec suite against installed source and arm64 macOS gems.
+
+Download the `.gem` artifacts from the exact Buildkite build to review a snapshot
+before publication. Packaging has no publishing command or RubyGems OIDC plugin.
+The existing release pipeline reuses these same packaging steps.
+
+Buildkite currently disables fork PR builds. A same-repository branch is needed
+for ordinary CI, or a maintainer must separately enable/run fork validation.
+The live pipeline settings are managed in `buildkite/saas-iac`; this change does
+not modify them.
+
+### Human-authorized publication
+
+Merging an update PR, creating/pushing a version tag, and publishing each release
+require explicit human authorization. A successful beta build grants none of
+these permissions.
+
+After review and authorization to tag the selected commit, the tag must be
+`v` followed by its exact `CEL::VERSION`, for example
+`v0.4.0.beta.20261111.1`. `release:verify-tag` rejects a mismatch.
+The release pipeline builds and tests its packages, then pauses at **Approve
+publication**. A human with Buildkite unblock permission must approve that
+specific build before the RubyGems OIDC publish step can run.
+
+A manual release-pipeline build without a tag, or a build with `DRY_RUN=true`,
+only builds/tests artifacts: it skips both the approval and publication steps.
+Before stable promotion, choose the gem's stable version and released cel crate
+dependency deliberately, update both lockfiles, and repeat review and validation.
 
 ## Compatibility notes
 
+- The beta includes the full upstream range from cel 0.15.0 through the pinned
+  snapshot, not just #339. `references` now excludes comprehension bindings
+  (such as `x` in `items.map(x, x + offset)`) and removes leading dots from
+  absolute names. Consumers should supply only the remaining external variables.
+- Map membership with an unusable key (such as `[] in {'a': 1}`) now returns
+  `false`. Optional indexing suppresses missing-key/out-of-bounds errors only;
+  invalid operations such as `[1][?'bad'].hasValue()` raise `CEL::ExecutionError`.
+- Existing Ruby APIs remain available, and duplicate extension names still
+  raise `ArgumentError` even though upstream library registration is now idempotent.
+  New upstream bindings/network libraries and configurable list-range sizes
+  are not exposed by this beta.
 - Compilation uses the standard CEL environment, including optional access syntax (`user.?name`) and the `optMap` / `optFlatMap` macros.
 - The upstream strings, lists, math, and encoders extension libraries are opt-in through the `extensions:` compile option.
 - cel 0.15 no longer includes `max` and `min` by default, so default contexts register them for compatibility with cel 0.13. See [`max` and `min`](#max-and-min).

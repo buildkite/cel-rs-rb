@@ -76,6 +76,19 @@ mise run clippy
 description = "Run Standard in CI"
 run = "mise run standard"
 
+[tasks."beta:update"]
+description = "Prepare the next dated beta snapshot of upstream's default branch (local edits only)"
+run = "ruby script/update-beta.rb"
+
+[tasks."beta:package"]
+description = "Upload artifact-only packaging steps for prerelease versions"
+run = """
+ruby -rrubygems -r ./lib/cel/version -e '
+  exit unless Gem::Version.new(CEL::VERSION).prerelease?
+  exec("buildkite-agent", "pipeline", "upload", ".buildkite/package.pipeline.yml")
+'
+"""
+
 [tasks."release:verify-tag"]
 description = "Fail unless the git tag (BUILDKITE_TAG) matches CEL::VERSION"
 run = """
@@ -107,15 +120,23 @@ bundle exec rake build
 depends = ["deps"]
 
 [tasks."release:smoke-install-gem"]
-description = "Install a built gem and verify it loads"
+description = "Install a built gem and run its packaged RSpec suite"
 run = """
 gem_file="${RELEASE_GEM_FILE:-}"
 if [ -z "$gem_file" ]; then gem_file="$(find pkg -name '*.gem' | head -n 1)"; fi
 if [ -z "$gem_file" ] || [ ! -f "$gem_file" ]; then echo "No gem found to smoke install" >&2; exit 1; fi
+export CEL_SMOKE_VERSION="$(ruby -rrubygems/package -e 'print Gem::Package.new(ARGV.fetch(0)).spec.version' "$gem_file")"
 gem install "$gem_file" --local --no-document
 smoke_dir="$(mktemp -d)"; cd "$smoke_dir"
-ruby -rcel -e 'puts CEL::VERSION'
+ruby -rrspec/core -e '
+  gem "cel-rs-rb", ENV.fetch("CEL_SMOKE_VERSION")
+  require "cel"
+  spec = Gem.loaded_specs.fetch("cel-rs-rb")
+  puts "Testing installed #{spec.full_name} from #{spec.full_gem_path}"
+  exit RSpec::Core::Runner.run(["-I", "#{spec.full_gem_path}/spec", "#{spec.full_gem_path}/spec/cel_spec.rb"])
+'
 """
+depends = ["deps"]
 
 [tasks."release:publish-gems"]
 description = "Publish pre-built gems from pkg/ to RubyGems"

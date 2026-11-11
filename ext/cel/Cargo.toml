@@ -10,5 +10,10 @@ crate-type = ["cdylib"]
 [dependencies]
 magnus = { version = "0.8.2", features = ["chrono", "rb-sys"] }
 rb-sys = { version = "0.9.128", features = ["stable-api-compiled-fallback"] }
-cel = { version = "0.15.0", features = ["chrono", "regex", "json"] }
 chrono = "0.4.45"
+
+# Beta snapshots pin upstream's default branch. Refresh with mise run beta:update.
+[dependencies.cel]
+git = "https://github.com/cel-rust/cel-rust"
+rev = "db2afd90cfc6f8bd6c845dc51f43d89b4a133752"
+features = ["chrono", "regex", "json"]

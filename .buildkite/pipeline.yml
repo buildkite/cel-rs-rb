@@ -42,3 +42,10 @@ steps:
     command: mise run ci:clippy
     plugins:
       - mise#v1.1.4: *mise_plugin
+
+  - wait: ~
+
+  - label: ":package: Beta review artifacts"
+    command: mise run beta:package
+    plugins:
+      - mise#v1.1.4: *mise_plugin
