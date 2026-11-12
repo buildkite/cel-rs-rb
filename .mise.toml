@@ -125,8 +125,10 @@ run = """
 gem_file="${RELEASE_GEM_FILE:-}"
 if [ -z "$gem_file" ]; then gem_file="$(find pkg -name '*.gem' | head -n 1)"; fi
 if [ -z "$gem_file" ] || [ ! -f "$gem_file" ]; then echo "No gem found to smoke install" >&2; exit 1; fi
+gem install rspec --version '~> 3.13' --no-document
+gem install simplecov --version '~> 0.22' --no-document
 export CEL_SMOKE_VERSION="$(ruby -rrubygems/package -e 'print Gem::Package.new(ARGV.fetch(0)).spec.version' "$gem_file")"
-gem install "$gem_file" --local --no-document
+gem install "$gem_file" --no-document
 smoke_dir="$(mktemp -d)"; cd "$smoke_dir"
 ruby -rrspec/core -e '
   gem "cel-rs-rb", ENV.fetch("CEL_SMOKE_VERSION")
@@ -136,7 +138,6 @@ ruby -rrspec/core -e '
   exit RSpec::Core::Runner.run(["-I", "#{spec.full_gem_path}/spec", "#{spec.full_gem_path}/spec/cel_spec.rb"])
 '
 """
-depends = ["deps"]
 
 [tasks."release:publish-gems"]
 description = "Publish pre-built gems from pkg/ to RubyGems"
