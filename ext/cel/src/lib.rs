@@ -471,13 +471,15 @@ impl ProgramWrap {
         // Root and pin this run's callbacks before releasing the GVL. A registration
         // can be replaced while execution is in flight, including from a callback.
         // These roots are dropped with the GVL held, on both success and error.
-        let _callbacks: Vec<_> = context
+        let callbacks: Vec<_> = context
             .functions
             .lock()
             .unwrap()
             .iter()
-            .map(|registration| BoxValue::new(registration.callback.proc))
+            .map(|registration| registration.callback.proc)
             .collect();
+        // Registering a root can trigger GC, whose mark hook locks functions again.
+        let _callbacks: Vec<_> = callbacks.into_iter().map(BoxValue::new).collect();
         self.execute_with_context_internal(&context.build_context(self.env.clone())?)
     }
 

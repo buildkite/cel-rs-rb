@@ -3,6 +3,7 @@
 require "spec_helper"
 require "time"
 require "open3"
+require "timeout"
 
 RSpec.describe CEL do
   describe ".compile" do
@@ -194,6 +195,30 @@ RSpec.describe CEL do
       )
 
       expect(status.success?).to eq(true), output
+    end
+
+    it "allows garbage collection while registering execution roots" do
+      Open3.popen2e(
+        RbConfig.ruby, "-I", File.expand_path("../lib", __dir__), "-rcel", "-e", <<~RUBY
+          context = CEL::Context.new
+          context.define_function("answer") { 42 }
+          program = CEL.compile("answer()")
+          GC.stress = true
+          3.times do
+            raise "incorrect callback result" unless program.execute(context) == 42
+          end
+          GC.stress = false
+        RUBY
+      ) do |stdin, output, process|
+        stdin.close
+        begin
+          result = Timeout.timeout(30) { output.read }
+          expect(process.value.success?).to eq(true), result
+        rescue Timeout::Error
+          Process.kill("KILL", process.pid)
+          raise
+        end
+      end
     end
 
     it "pins replaced callbacks until in-flight executions finish, including on errors" do
