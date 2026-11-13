@@ -145,6 +145,13 @@ just like conflicts with standard CEL builtins.
 - Ruby callbacks from CEL functions temporarily re-acquire the GVL before
   invoking Ruby code.
 
+Registering a function name again with `define_function` or `add_function`
+replaces its callback for future executions. In-flight executions keep using
+their original snapshot. Callbacks are kept alive and pinned against Ruby GC
+compaction while registered or used by an in-flight execution. Once replaced,
+an old callback and its captured values can be collected after those executions
+finish, provided nothing else references them.
+
 ## Development
 
 ### Tooling

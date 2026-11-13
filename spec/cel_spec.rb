@@ -166,6 +166,82 @@ RSpec.describe CEL do
       expect(CEL.compile("adjust(3)").execute(context)).to eq(10)
     end
 
+    it "releases replaced callbacks and their captures while keeping the current callback alive" do
+      output, status = Open3.capture2e(
+        RbConfig.ruby, "-I", File.expand_path("../lib", __dir__), "-rcel", "-rweakref", "-e", <<~RUBY
+          context, callbacks, captures = Thread.new do
+            ctx = CEL::Context.new
+            callbacks = []
+            captures = []
+            20.times do |i|
+              capture = +"capture:\#{i}"
+              callback = proc { capture }
+              ctx.add_function("current", callback)
+              callbacks << WeakRef.new(callback)
+              captures << WeakRef.new(capture)
+            end
+            [ctx, callbacks, captures]
+          end.value
+
+          GC.start
+          GC.verify_compaction_references(expand_heap: true, toward: :empty)
+          alive = [callbacks, captures].map { |refs| refs.count(&:weakref_alive?) }
+          raise "expected 1 callback and capture, got \#{alive.inspect}" unless alive == [1, 1]
+          raise "current callback was collected" unless callbacks.last.weakref_alive? && captures.last.weakref_alive?
+          result = CEL.compile("current()").execute(context)
+          raise "incorrect replacement result: \#{result.inspect}" unless result == "capture:19"
+        RUBY
+      )
+
+      expect(status.success?).to eq(true), output
+    end
+
+    it "pins replaced callbacks until in-flight executions finish, including on errors" do
+      output, status = Open3.capture2e(
+        RbConfig.ruby, "-I", File.expand_path("../lib", __dir__), "-rcel", "-rweakref", "-e", <<~RUBY
+          [false, true].each do |fail_execution|
+            ready = Queue.new
+            resume = Queue.new
+            context, callback, capture = Thread.new do
+              ctx = CEL::Context.new
+              value = +"original"
+              original = proc { value + ":called" }
+              ctx.define_function("current", &original)
+              [ctx, WeakRef.new(original), WeakRef.new(value)]
+            end.value
+            context.define_function("pause") { ready << true; resume.pop; 0 }
+
+            source = fail_execution ? "[pause(), current(), 1 / 0]" : "[pause(), current()]"
+            runner = Thread.new do
+              CEL.compile(source).execute(context)
+            rescue => error
+              raise unless fail_execution && error.message.include?("Division by zero")
+
+              :execution_error
+            end
+            ready.pop
+            Thread.new { context.define_function("current") { "replacement" } }.join
+
+            GC.start
+            GC.verify_compaction_references(expand_heap: true, toward: :empty)
+            raise "in-flight callback was collected" unless callback.weakref_alive? && capture.weakref_alive?
+            resume << true
+            result = runner.value
+            expected = fail_execution ? :execution_error : [0, "original:called"]
+            raise "incorrect snapshot result: \#{result.inspect}" unless result == expected
+
+            GC.start
+            GC.verify_compaction_references(expand_heap: true, toward: :empty)
+            raise "finished execution retained old callback" if callback.weakref_alive? || capture.weakref_alive?
+            result = CEL.compile("current()").execute(context)
+            raise "incorrect current callback result: \#{result.inspect}" unless result == "replacement"
+          end
+        RUBY
+      )
+
+      expect(status.success?).to eq(true), output
+    end
+
     it "raises clear type error for unsupported variable types" do
       context = CEL::Context.new
       expect { context.add_variable("bad", Object.new) }.to raise_error(CEL::TypeError)

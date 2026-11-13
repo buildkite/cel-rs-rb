@@ -5,6 +5,7 @@ use cel::{
 use magnus::block::Proc;
 use magnus::prelude::*;
 use magnus::typed_data::Obj;
+use magnus::value::BoxValue;
 use magnus::{function, method, Error, IntoValue, RHash, RString, Ruby, TryConvert, Value};
 use rb_sys::{rb_thread_call_with_gvl, rb_thread_call_without_gvl};
 use std::collections::HashMap;
@@ -359,10 +360,13 @@ impl ContextWrap {
     }
 
     fn add_function(&self, name: String, proc: Proc) {
-        self.functions.lock().unwrap().push(FunctionRegistration {
-            name,
-            callback: Arc::new(CallbackFunction { proc }),
-        });
+        let mut functions = self.functions.lock().unwrap();
+        let callback = Arc::new(CallbackFunction { proc });
+        if let Some(registration) = functions.iter_mut().find(|entry| entry.name == name) {
+            registration.callback = callback;
+        } else {
+            functions.push(FunctionRegistration { name, callback });
+        }
     }
 
     fn build_context(&self, env: Arc<cel::Env>) -> Result<CelContext<'static, 'static>, Error> {
@@ -464,6 +468,16 @@ impl ProgramWrap {
     }
 
     fn execute_with_context(&self, context: &ContextWrap) -> Result<Value, Error> {
+        // Root and pin this run's callbacks before releasing the GVL. A registration
+        // can be replaced while execution is in flight, including from a callback.
+        // These roots are dropped with the GVL held, on both success and error.
+        let _callbacks: Vec<_> = context
+            .functions
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|registration| BoxValue::new(registration.callback.proc))
+            .collect();
         self.execute_with_context_internal(&context.build_context(self.env.clone())?)
     }
 

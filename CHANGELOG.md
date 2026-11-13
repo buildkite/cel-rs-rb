@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Release replaced Ruby callbacks and their captured values instead of retaining
+  every registration until the `CEL::Context` is collected. In-flight executions
+  keep their original callbacks alive and pinned against GC compaction until
+  execution finishes, including when execution raises an error.
+
 ## 0.3.1
 
 ### Fixed
