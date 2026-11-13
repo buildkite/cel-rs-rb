@@ -10,8 +10,8 @@ rescue LoadError
 end
 
 module CEL
-  def self.compile(source, extensions: [])
-    Program.compile(source, extensions: extensions)
+  def self.compile(source, extensions: [], max_iterations: 0)
+    Program.compile(source, extensions: extensions, max_iterations: max_iterations)
   end
 
   class Context
@@ -41,21 +41,34 @@ module CEL
     class << self
       alias_method :__native_compile, :compile
 
-      def compile(source, extensions: [])
-        __native_compile(source, extensions.map(&:to_s))
+      def compile(source, extensions: [], max_iterations: 0)
+        unless max_iterations.is_a?(Integer) && max_iterations >= 0
+          raise ArgumentError, "max_iterations must be a non-negative Integer"
+        end
+
+        names = extensions.map(&:to_s)
+        raise ArgumentError, "Repeated CEL extension" if names.uniq.length != names.length
+
+        __native_compile(source, names, max_iterations)
       end
     end
 
     alias_method :__native_execute, :execute
 
-    def execute(context = nil)
-      return __native_execute if context.nil?
+    def execute(context = nil, timeout: nil, interrupt: nil)
+      return __native_execute(timeout, interrupt) if context.nil?
 
-      execute_with_context(context)
+      execute_with_context(context, timeout: timeout, interrupt: interrupt)
     end
 
-    def call(context = nil)
-      execute(context)
+    alias_method :__native_execute_with_context, :execute_with_context
+
+    def execute_with_context(context, timeout: nil, interrupt: nil)
+      __native_execute_with_context(context, timeout, interrupt)
+    end
+
+    def call(context = nil, timeout: nil, interrupt: nil)
+      execute(context, timeout: timeout, interrupt: interrupt)
     end
   end
 end

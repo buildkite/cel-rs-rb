@@ -10,61 +10,43 @@ use rb_sys::{rb_thread_call_with_gvl, rb_thread_call_without_gvl};
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 mod errors {
     use magnus::prelude::*;
     use magnus::{Error, ExceptionClass, RModule, Ruby};
-    use std::cell::RefCell;
-
-    thread_local! {
-        static PARSE: RefCell<Option<ExceptionClass>> = const { RefCell::new(None) };
-        static EXECUTION: RefCell<Option<ExceptionClass>> = const { RefCell::new(None) };
-        static TYPE: RefCell<Option<ExceptionClass>> = const { RefCell::new(None) };
-    }
 
     pub fn define(ruby: &Ruby, module: &RModule) -> Result<(), Error> {
         let standard = ruby.exception_standard_error();
         let base = module.define_error("Error", standard)?;
-        let parse = module.define_error("ParseError", base)?;
-        let execution = module.define_error("ExecutionError", base)?;
-        let ty = module.define_error("TypeError", base)?;
-        PARSE.with(|slot| *slot.borrow_mut() = Some(parse));
-        EXECUTION.with(|slot| *slot.borrow_mut() = Some(execution));
-        TYPE.with(|slot| *slot.borrow_mut() = Some(ty));
+        module.define_error("ParseError", base)?;
+        module.define_error("ExecutionError", base)?;
+        module.define_error("TypeError", base)?;
         Ok(())
     }
 
-    fn fallback(msg: String) -> Error {
+    fn error(class: &str, msg: impl Into<String>) -> Error {
         let ruby = Ruby::get().expect("ruby runtime");
-        Error::new(ruby.exception_runtime_error(), msg)
+        let class = ruby
+            .class_object()
+            .const_get::<_, RModule>("CEL")
+            .and_then(|module| module.const_get::<_, ExceptionClass>(class))
+            .unwrap_or_else(|_| ruby.exception_runtime_error());
+        Error::new(class, msg.into())
     }
 
     pub fn parse(msg: impl Into<String>) -> Error {
-        let msg = msg.into();
-        PARSE.with(|slot| {
-            slot.borrow()
-                .map(|exc| Error::new(exc, msg.clone()))
-                .unwrap_or_else(|| fallback(msg))
-        })
+        error("ParseError", msg)
     }
 
     pub fn execution(msg: impl Into<String>) -> Error {
-        let msg = msg.into();
-        EXECUTION.with(|slot| {
-            slot.borrow()
-                .map(|exc| Error::new(exc, msg.clone()))
-                .unwrap_or_else(|| fallback(msg))
-        })
+        error("ExecutionError", msg)
     }
 
     pub fn ty(msg: impl Into<String>) -> Error {
-        let msg = msg.into();
-        TYPE.with(|slot| {
-            slot.borrow()
-                .map(|exc| Error::new(exc, msg.clone()))
-                .unwrap_or_else(|| fallback(msg))
-        })
+        error("TypeError", msg)
     }
 }
 
@@ -167,6 +149,26 @@ struct ContextWrap {
 struct ProgramWrap {
     inner: CelProgram,
     env: Arc<cel::Env>,
+}
+
+#[derive(Default)]
+#[magnus::wrap(class = "CEL::CancellationToken", free_immediately, size)]
+struct CancellationTokenWrap {
+    cancelled: AtomicBool,
+}
+
+impl CancellationTokenWrap {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
 }
 
 #[derive(Clone)]
@@ -356,9 +358,11 @@ impl ContextWrap {
         });
     }
 
-    fn build_context(&self, env: Arc<cel::Env>) -> Result<CelContext<'static, 'static>, Error> {
+    fn build_context<'v>(&self, env: Arc<cel::Env>) -> Result<CelContext<'v, 'v>, Error> {
         let mut ctx = if self.use_empty {
-            CelContext::empty()
+            let mut empty_env = cel::Env::default();
+            empty_env.set_options(env.options().clone());
+            CelContext::with_env(Arc::new(empty_env))
         } else {
             let mut ctx = CelContext::with_env(env);
             ctx.add_function("max", cel::functions::max)
@@ -425,9 +429,14 @@ impl ContextWrap {
 }
 
 impl ProgramWrap {
-    fn compile(source: String, extensions: Vec<String>) -> Result<Self, Error> {
+    fn compile(
+        source: String,
+        extensions: Vec<String>,
+        max_iterations: u64,
+    ) -> Result<Self, Error> {
         let ruby = Ruby::get().expect("ruby runtime");
         let mut env = cel::Env::stdlib();
+        env.set_options(cel::RuntimeOptions::default().with_max_iterations(max_iterations));
         for name in extensions {
             let extension = match name.as_str() {
                 "strings" => cel::extensions::strings,
@@ -450,20 +459,46 @@ impl ProgramWrap {
             .map_err(|e: ParseErrors| errors::parse(e.to_string()))
     }
 
-    fn execute(&self) -> Result<Value, Error> {
-        self.execute_with_context(&ContextWrap::new(false))
+    fn execute(
+        &self,
+        timeout: Option<f64>,
+        interrupt: Option<Obj<CancellationTokenWrap>>,
+    ) -> Result<Value, Error> {
+        self.execute_with_context(&ContextWrap::new(false), timeout, interrupt)
     }
 
-    fn execute_with_context(&self, context: &ContextWrap) -> Result<Value, Error> {
-        self.execute_with_context_internal(&context.build_context(self.env.clone())?)
-    }
+    fn execute_with_context(
+        &self,
+        context: &ContextWrap,
+        timeout: Option<f64>,
+        interrupt: Option<Obj<CancellationTokenWrap>>,
+    ) -> Result<Value, Error> {
+        let ruby = Ruby::get().expect("ruby runtime");
+        let timeout = timeout
+            .map(|seconds| {
+                Duration::try_from_secs_f64(seconds).map_err(|_| {
+                    Error::new(
+                        ruby.exception_arg_error(),
+                        "timeout must be finite, non-negative seconds within range",
+                    )
+                })
+            })
+            .transpose()?;
+        let deadline = timeout.map(cel::Deadline::after);
+        let cancelled = interrupt.as_ref().map(|token| &token.cancelled);
+        let signal = || {
+            cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed))
+                || deadline.is_some_and(|deadline| cel::Interrupt::is_interrupted(&deadline))
+        };
+        let mut ctx = context.build_context(self.env.clone())?;
+        if timeout.is_some() || cancelled.is_some() {
+            ctx.set_interrupt(&signal);
+        }
 
-    fn execute_with_context_internal(&self, ctx: &CelContext<'_, '_>) -> Result<Value, Error> {
-        let run = || self.inner.execute(ctx);
+        let run = || self.inner.execute(&ctx);
         let result = panic::catch_unwind(AssertUnwindSafe(|| without_gvl(run)))
             .map_err(|_| errors::execution("CEL execution panicked"))?;
 
-        let ruby = Ruby::get().expect("ruby runtime");
         result
             .map_err(|e| errors::execution(e.to_string()))
             .and_then(|value| cel_to_ruby(&ruby, &value))
@@ -499,6 +534,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("CEL")?;
     errors::define(ruby, &module)?;
 
+    let token_class = module.define_class("CancellationToken", ruby.class_object())?;
+    token_class.define_singleton_method("new", function!(CancellationTokenWrap::new, 0))?;
+    token_class.define_method("cancel!", method!(CancellationTokenWrap::cancel, 0))?;
+    token_class.define_method(
+        "cancelled?",
+        method!(CancellationTokenWrap::is_cancelled, 0),
+    )?;
+
     let context_class = module.define_class("Context", ruby.class_object())?;
     context_class.define_singleton_method("new", function!(ContextWrap::new, 1))?;
     context_class.define_method("add_variable", method!(ContextWrap::add_variable, 2))?;
@@ -514,11 +557,11 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     duration_class.define_method("==", method!(DurationWrap::eq, 1))?;
 
     let program_class = module.define_class("Program", ruby.class_object())?;
-    program_class.define_singleton_method("compile", function!(ProgramWrap::compile, 2))?;
-    program_class.define_method("execute", method!(ProgramWrap::execute, 0))?;
+    program_class.define_singleton_method("compile", function!(ProgramWrap::compile, 3))?;
+    program_class.define_method("execute", method!(ProgramWrap::execute, 2))?;
     program_class.define_method(
         "execute_with_context",
-        method!(ProgramWrap::execute_with_context, 1),
+        method!(ProgramWrap::execute_with_context, 3),
     )?;
     program_class.define_method("references", method!(ProgramWrap::references, 0))?;
     program_class.define_method("expression", method!(ProgramWrap::expression, 0))?;

@@ -1,0 +1,62 @@
+agents:
+  queue: hosted
+
+cache: ".buildkite/cache-volume"
+
+env:
+  MISE_GITHUB_ATTESTATIONS: "false"
+  MISE_RUBY_GITHUB_ATTESTATIONS: "false"
+  MISE_RUBY_PRECOMPILED_URL: "https://github.com/jdx/ruby/releases/download/{version}/ruby-{version}.{platform}.tar.gz"
+
+common_mise_plugin: &mise_plugin
+  version: 2026.6.6
+
+steps:
+  - group: ":package: Native gems"
+    key: native-gems
+    steps:
+      - label: ":package: {{matrix}} gem"
+        command: |
+          mise run release:build-gem
+          buildkite-agent artifact upload "pkg/*-{{matrix}}.gem"
+        env:
+          RELEASE_PLATFORM: "{{matrix}}"
+        matrix:
+          - x86_64-linux
+          - aarch64-linux
+          - x86_64-linux-musl
+          - aarch64-linux-musl
+          - arm64-darwin
+          - x86_64-darwin
+        plugins:
+          - mise#v1.1.4: *mise_plugin
+
+  - label: ":package: ruby gem"
+    key: ruby-gem
+    command: |
+      mise run release:build-ruby-gem
+      version="$(ruby -r ./lib/cel/version -e 'print CEL::VERSION')"
+      buildkite-agent artifact upload "pkg/cel-rs-rb-$${version}.gem"
+    plugins:
+      - mise#v1.1.4: *mise_plugin
+
+  - label: ":ruby: Smoke install source gem"
+    depends_on: ruby-gem
+    command: |
+      mise run ci:install-system-deps
+      version="$(mise exec -- ruby -r ./lib/cel/version -e 'print CEL::VERSION')"
+      buildkite-agent artifact download "pkg/cel-rs-rb-$${version}.gem" .
+      mise run release:smoke-install-gem
+    plugins:
+      - mise#v1.1.4: *mise_plugin
+
+  - label: ":mac: Smoke install arm64-darwin gem"
+    key: macos-smoke
+    depends_on: native-gems
+    agents:
+      queue: macos
+    command: |
+      buildkite-agent artifact download "pkg/*-arm64-darwin.gem" .
+      mise run release:smoke-install-gem
+    plugins:
+      - mise#v1.1.4: *mise_plugin

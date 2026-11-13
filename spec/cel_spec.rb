@@ -145,6 +145,106 @@ RSpec.describe CEL do
       expect(refs["functions"]).to include("size")
     end
 
+    it "reports external references without comprehension bindings" do
+      program = CEL.compile("items.map(x, x + offset)")
+      expect(program.references["variables"]).to contain_exactly("items", "offset")
+    end
+
+    it "bounds total nested iterations with a fresh budget for every execution" do
+      expression = "[1, 2].map(x, [3, 4].filter(y, y > x))"
+      program = CEL.compile(expression, max_iterations: 6)
+      [nil, CEL::Context.new, CEL::Context.new(true)].each do |context|
+        2.times { expect(program.execute(context)).to eq([[3, 4], [3, 4]]) }
+        expect { CEL.compile(expression, max_iterations: 5).execute(context) }
+          .to raise_error(CEL::ExecutionError, /iteration.*5/i)
+      end
+      expect(CEL.compile(expression).execute).to eq([[3, 4], [3, 4]])
+    end
+
+    it "does not let logical or optional expressions absorb budget failures" do
+      [
+        "[1, 2].all(x, x > 0) || true",
+        "[1, 2].all(x, x > 0) && false",
+        "[[1, 2].all(x, x > 0)][?0].hasValue()"
+      ].each do |expression|
+        expect { CEL.compile(expression, max_iterations: 1).execute }
+          .to raise_error(CEL::ExecutionError, /iteration/i)
+      end
+    end
+
+    it "rejects invalid iteration budgets and timeouts" do
+      [-1, 1.5, nil, "3"].each do |budget|
+        expect { CEL.compile("1", max_iterations: budget) }.to raise_error(ArgumentError)
+      end
+      expect { CEL.compile("1", max_iterations: 2**64) }.to raise_error(RangeError)
+      program = CEL.compile("1")
+      [-1, Float::INFINITY, Float::NAN, 1e100].each do |timeout|
+        expect { program.execute(timeout: timeout) }.to raise_error(ArgumentError, /timeout/)
+      end
+      expect { program.execute(interrupt: Object.new) }.to raise_error(TypeError)
+    end
+
+    it "applies cooperative timeouts per call without poisoning later executions" do
+      program = CEL.compile("['ABC'].map(x, x.lowerAscii())", extensions: [:strings])
+      context = CEL::Context.new
+      expect { program.execute(context, timeout: 0) }.to raise_error(CEL::ExecutionError, /interrupt/i)
+      expect(program.execute(context, timeout: 1)).to eq(["abc"])
+      expect(program.call(timeout: 1)).to eq(["abc"])
+      expect(program.execute_with_context(context, timeout: 1)).to eq(["abc"])
+      expect(program.execute(context)).to eq(["abc"])
+      expect { program.execute(timeout: 0, interrupt: CEL::CancellationToken.new) }
+        .to raise_error(CEL::ExecutionError, /interrupt/i)
+      expect { program.execute(CEL::Context.new(true), timeout: 0) }
+        .to raise_error(CEL::ExecutionError, /interrupt/i)
+      expect(CEL.compile("1 + 1").execute(timeout: 0)).to eq(2)
+    end
+
+    it "observes an elapsed deadline after a Ruby callback returns" do
+      returned = false
+      context = CEL::Context.build do |ctx|
+        ctx.define_function("delay") do
+          sleep(0.02)
+          returned = true
+        end
+      end
+      program = CEL.compile("delay() && [1, 2].all(x, x > 0)")
+      expect { program.execute(context, timeout: 0.001) }
+        .to raise_error(CEL::ExecutionError, /interrupt/i)
+      expect(returned).to eq(true)
+    end
+
+    it "cancels an evaluation from another Ruby thread and keeps other runs independent" do
+      token = CEL::CancellationToken.new
+      expect(token.cancelled?).to eq(false)
+      started = Queue.new
+      resume = Queue.new
+      context = CEL::Context.build(items: [1, 2]) do |ctx|
+        ctx.define_function("started") do
+          started << true
+          resume.pop
+          true
+        end
+      end
+      program = CEL.compile("started() && items.all(x, items.exists(y, y > x)) || true")
+      runner = Thread.new do
+        program.execute(context, interrupt: token)
+      rescue CEL::ExecutionError => e
+        e
+      end
+      started.pop
+      token.cancel!
+      resume << true
+      expect(token.cancelled?).to eq(true)
+      expect(runner.value).to be_a(CEL::ExecutionError).and(have_attributes(message: /interrupt/i))
+
+      control = CEL::Context.build(items: [1, 2]) do |ctx|
+        ctx.define_function("started") { true }
+      end
+      expect(program.execute(control)).to eq(true)
+      expect(program.execute(control, interrupt: CEL::CancellationToken.new)).to eq(true)
+      expect { program.execute(control, interrupt: token) }.to raise_error(CEL::ExecutionError, /interrupt/i)
+    end
+
     it "registers max and min by default" do
       tests = {
         "max(2, 9, -3)" => 9,
@@ -243,7 +343,7 @@ RSpec.describe CEL do
     end
 
     it "executes the same program concurrently with independent contexts" do
-      program = CEL.compile("items.map(x, x + offset).filter(x, x > cutoff).size() + id")
+      program = CEL.compile("items.map(x, x + offset).filter(x, x > cutoff).size() + id", max_iterations: 400)
       ready = Queue.new
       start = Queue.new
 

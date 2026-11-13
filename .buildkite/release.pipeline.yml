@@ -19,50 +19,18 @@ steps:
     plugins:
       - mise#v1.1.4: *mise_plugin
 
-  - group: ":package: Native gems"
-    key: native-gems
-    steps:
-      - label: ":package: {{matrix}} gem"
-        command: |
-          mise run release:build-gem
-          buildkite-agent artifact upload "pkg/*-{{matrix}}.gem"
-        env:
-          RELEASE_PLATFORM: "{{matrix}}"
-        matrix:
-          - x86_64-linux
-          - aarch64-linux
-          - x86_64-linux-musl
-          - aarch64-linux-musl
-          - arm64-darwin
-          - x86_64-darwin
-        plugins:
-          - mise#v1.1.4: *mise_plugin
-
-  - label: ":package: ruby gem"
-    key: ruby-gem
-    command: |
-      mise run release:build-ruby-gem
-      version="$(ruby -r ./lib/cel/version -e 'print CEL::VERSION')"
-      buildkite-agent artifact upload "pkg/cel-rs-rb-${version}.gem"
-    plugins:
-      - mise#v1.1.4: *mise_plugin
-
-  - label: ":mac: Smoke install arm64-darwin gem"
-    key: macos-smoke
-    depends_on: native-gems
-    agents:
-      queue: macos
-    command: |
-      buildkite-agent artifact download "pkg/*-arm64-darwin.gem" .
-      mise run release:smoke-install-gem
-    plugins:
-      - mise#v1.1.4: *mise_plugin
+  - label: ":pipeline: Build reviewable packages"
+    depends_on: verify-tag
+    command: buildkite-agent pipeline upload .buildkite/package.pipeline.yml
 
   - wait: ~
 
-  # Publish only runs on a real version tag AND when not a dry run.
-  # Trigger a manual build (no tag) or set DRY_RUN=true to exercise the
-  # cross-compile + smoke steps without publishing to rubygems.org.
+  - block: ":rubygems: Approve publication"
+    prompt: "Publish the tested gems from this tagged commit to RubyGems? This cannot be undone."
+    if: build.tag != null && build.env("DRY_RUN") != "true"
+
+  # Branch/PR packages never reach this pipeline. A tag, successful packaging,
+  # and a human unblocking this build are all required for publication.
   - label: ":rubygems: Publish"
     if: build.tag != null && build.env("DRY_RUN") != "true"
     command: |

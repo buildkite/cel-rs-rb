@@ -21,7 +21,7 @@ Gem::Specification.new do |spec|
   spec.files = Dir[
     "lib/**/*.rb",
     "ext/**/*.{rb,rs,toml}",
-    "spec/**/*.rb",
+    "spec/{cel_spec,spec_helper}.rb",
     "Cargo.toml",
     "LICENSE",
     "README.md"
