@@ -43,7 +43,7 @@ steps:
     command: |
       mise run release:build-ruby-gem
       version="$(ruby -r ./lib/cel/version -e 'print CEL::VERSION')"
-      buildkite-agent artifact upload "pkg/cel-rs-rb-${version}.gem"
+      buildkite-agent artifact upload "pkg/cel-rs-rb-$${version}.gem"
     plugins:
       - mise#v1.1.4: *mise_plugin
 
