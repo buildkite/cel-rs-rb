@@ -221,6 +221,47 @@ RSpec.describe CEL do
       end
     end
 
+    it "releases execution roots after a thread is interrupted or killed" do
+      output, status = Open3.capture2e(
+        RbConfig.ruby, "-I", File.expand_path("../lib", __dir__), "-rcel", "-rweakref", "-e", <<~RUBY
+          [:raise, :kill].each do |interrupt|
+            ready = Queue.new
+            runner = Thread.new do
+              context = CEL::Context.new
+              capture = +"cancelled execution"
+              callback = proc { capture }
+              context.define_function("unused", &callback)
+              context.add_variable("items", Array.new(2_000, 1))
+              program = CEL.compile("items.map(x, items.map(y, x + y).size()).size()")
+              ready << [WeakRef.new(context), WeakRef.new(callback), WeakRef.new(capture)]
+              program.execute(context)
+              :completed
+            rescue Interrupt
+              :interrupted
+            end
+            references = ready.pop
+            until runner.status == "sleep"
+              raise "execution finished before interruption" unless runner.alive?
+              Thread.pass
+            end
+            if interrupt == :raise
+              runner.raise(Interrupt)
+              raise "interrupt was not propagated" unless runner.value == :interrupted
+            else
+              runner.kill
+              raise "thread was not killed" unless runner.value.nil?
+            end
+
+            GC.start
+            GC.verify_compaction_references(expand_heap: true, toward: :empty)
+            raise "cancelled execution retained callback state" if references.any?(&:weakref_alive?)
+          end
+        RUBY
+      )
+
+      expect(status.success?).to eq(true), output
+    end
+
     it "pins replaced callbacks until in-flight executions finish, including on errors" do
       output, status = Open3.capture2e(
         RbConfig.ruby, "-I", File.expand_path("../lib", __dir__), "-rcel", "-rweakref", "-e", <<~RUBY

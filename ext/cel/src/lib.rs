@@ -4,6 +4,7 @@ use cel::{
 };
 use magnus::block::Proc;
 use magnus::prelude::*;
+use magnus::rb_sys::AsRawValue;
 use magnus::typed_data::Obj;
 use magnus::value::BoxValue;
 use magnus::{function, method, Error, IntoValue, RHash, RString, Ruby, TryConvert, Value};
@@ -69,7 +70,7 @@ mod errors {
     }
 }
 
-fn without_gvl<F, T>(f: F) -> T
+fn without_gvl<F, T>(f: F) -> Result<T, Error>
 where
     F: FnOnce() -> T,
     T: Send,
@@ -99,16 +100,19 @@ where
         result: None,
     };
 
-    unsafe {
+    // Ruby can raise an interrupt while reacquiring the GVL. Catch its longjmp
+    // here so the caller's Rust-owned execution context and GC roots are dropped.
+    magnus::rb_sys::protect(|| unsafe {
         rb_thread_call_without_gvl(
             Some(call::<F, T>),
             &mut state as *mut _ as *mut c_void,
             None,
             std::ptr::null_mut(),
         );
-    }
+        Ruby::get().expect("ruby runtime").qnil().as_raw()
+    })?;
 
-    state.result.expect("result missing")
+    Ok(state.result.expect("result missing"))
 }
 
 fn with_gvl<F, T>(f: F) -> T
@@ -486,7 +490,7 @@ impl ProgramWrap {
     fn execute_with_context_internal(&self, ctx: &CelContext<'_, '_>) -> Result<Value, Error> {
         let run = || self.inner.execute(ctx);
         let result = panic::catch_unwind(AssertUnwindSafe(|| without_gvl(run)))
-            .map_err(|_| errors::execution("CEL execution panicked"))?;
+            .map_err(|_| errors::execution("CEL execution panicked"))??;
 
         let ruby = Ruby::get().expect("ruby runtime");
         result

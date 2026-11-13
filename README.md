@@ -150,7 +150,8 @@ replaces its callback for future executions. In-flight executions keep using
 their original snapshot. Callbacks are kept alive and pinned against Ruby GC
 compaction while registered or used by an in-flight execution. Once replaced,
 an old callback and its captured values can be collected after those executions
-finish, provided nothing else references them.
+finish, including when their Ruby thread is interrupted or killed, provided
+nothing else references them.
 
 ## Development
 
