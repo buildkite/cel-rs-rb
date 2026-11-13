@@ -8,5 +8,3 @@
   `CEL::Context` is reachable. Prevents use-after-free after the caller drops its
   own reference and Ruby runs garbage collection. Callbacks are also pinned during
   compaction, including when collection runs inside a callback.
-
-This patch keeps the existing Ruby API and the `cel` 0.15 dependency.
