@@ -253,43 +253,114 @@ for six platforms (`x86_64-linux`, `aarch64-linux`, `x86_64-linux-musl`,
 RubyGems' latest-version metadata aligned; supported platforms should still
 resolve to their matching precompiled native gem.
 
-### Human-authorized publication
+### Main releases
 
-Merging an update PR, creating/pushing a version tag, and publishing each release
-require explicit human authorization. A successful beta build grants none of
-these permissions.
+```bash
+# 1. Start a release branch from main
+git fetch origin
+git switch -c release/0.4.0 origin/main
 
-After review and authorization to tag the selected commit, the tag must be
-`v` followed by its exact `CEL::VERSION`, for example
-`v0.4.0.beta.20261111.1`. `release:verify-tag` rejects a mismatch.
-The release pipeline builds and tests its packages, then pauses at **Approve
-publication**. A human with Buildkite unblock permission must approve that
-specific build before the RubyGems OIDC publish step can run.
+# 2. Set CEL::VERSION in lib/cel/version.rb (e.g. "0.4.0")
+#    Replace the Git cel dependency in ext/cel/Cargo.toml with a released crate version
 
-A manual release-pipeline build without a tag, or a build with `DRY_RUN=true`,
-only builds/tests artifacts: it skips both the approval and publication steps.
-Before stable promotion, choose the gem's stable version and released cel crate
-dependency deliberately, update both lockfiles, and repeat review and validation.
+# 3. Refresh lockfiles and validate
+mise exec -- bundle install
+mise run test
+mise run clippy
+
+# 4. Commit the update and open a PR
+git add lib/cel/version.rb ext/cel/Cargo.toml Cargo.lock Gemfile.lock
+git commit -m "Prepare v0.4.0"
+git push -u origin HEAD
+gh pr create --base main
+```
+
+### Beta releases
+
+```bash
+# 1. On a new update branch, keep/restore the cel Git pin in ext/cel/Cargo.toml
+#    Use the previous beta's dependency when restarting after a main release
+mise run beta:update
+# To start a new version line instead: BETA_BASE_VERSION=0.5.0 mise run beta:update
+
+# 2. Validate, commit, and open a PR
+mise run test
+mise run clippy
+git add lib/cel/version.rb ext/cel/Cargo.toml Cargo.lock Gemfile.lock
+git commit -m "Prepare beta snapshot"
+git push -u origin HEAD
+gh pr create --base main
+
+# 3. Review the tested .gem artifacts from the PR's Buildkite build
+```
+
+### Publishing either release
+
+Merging, tagging, and publishing each require explicit human approval.
+
+```bash
+# 1. After approval to merge, merge the release PR through GitHub
+
+# 2. After approval to tag, check out the approved commit (replace APPROVED_COMMIT)
+git fetch origin
+git switch --detach APPROVED_COMMIT
+
+# 3. Tag CEL::VERSION exactly; the tag starts the release pipeline
+version="$(mise exec -- ruby -r ./lib/cel/version -e 'print CEL::VERSION')"
+git tag "v${version}"
+git push origin "v${version}"
+
+# 4. Review the tagged build, then approve its "Approve publication" block
+```
+
+`release:verify-tag` rejects a tag/version mismatch. An untagged build or
+`DRY_RUN=true` builds/tests artifacts without publishing.
 
 ## Compatibility notes
 
-- The beta includes the full upstream range from cel 0.15.0 through the pinned
-  snapshot, not just #339. `references` now excludes comprehension bindings
-  (such as `x` in `items.map(x, x + offset)`) and removes leading dots from
-  absolute names. Consumers should supply only the remaining external variables.
-- Map membership with an unusable key (such as `[] in {'a': 1}`) now returns
-  `false`. Optional indexing suppresses missing-key/out-of-bounds errors only;
-  invalid operations such as `[1][?'bad'].hasValue()` raise `CEL::ExecutionError`.
-- Existing Ruby APIs remain available, and duplicate extension names still
-  raise `ArgumentError` even though upstream library registration is now idempotent.
-  New upstream bindings/network libraries and configurable list-range sizes
-  are not exposed by this beta.
-- Compilation uses the standard CEL environment, including optional access syntax (`user.?name`) and the `optMap` / `optFlatMap` macros.
-- The upstream strings, lists, math, and encoders extension libraries are opt-in through the `extensions:` compile option.
-- cel 0.15 no longer includes `max` and `min` by default, so default contexts register them for compatibility with cel 0.13. See [`max` and `min`](#max-and-min).
-- When upgrading from cel 0.13, replace list/map `.contains(value)` expressions with `value in collection`; `.contains()` now only accepts strings. Map literals with duplicate keys raise `CEL::ExecutionError`, and string `size()` counts Unicode code points rather than bytes. See the [cel 0.15 release notes](https://github.com/cel-rust/cel-rust/releases/tag/v0.15.0) for further CEL semantic changes.
-- `string(bytes)` now rejects invalid UTF-8. Numeric conversions reject out-of-range results, and parsed timestamps and durations must fit CEL's allowed ranges.
-- `all()` and `exists()` can now absorb an earlier evaluation error when a later element determines the result. For example, `[2, 1].exists(e, 6 / (2 - e) == 6)` returns `true` despite the first element's division by zero.
-- Ruby callbacks cannot shadow standard CEL builtins (such as `size`) in a default context; the compatibility functions `max` and `min` are exceptions. Conflicts raise `CEL::ExecutionError` when `Program#execute(context)` builds the execution snapshot, even if the expression does not call the conflicting function. Use `CEL::Context.new(true)` or `CEL::Context.build(empty: true)` to define functions without builtins. Registering the same custom callback name again replaces the previous callback.
-- Some CEL value variants (e.g. opaque custom Rust types) cannot be fully marshaled to Ruby and raise `CEL::TypeError`.
-- This project targets broad CEL compatibility, but parity for every Rust-only extension point is still evolving.
+### 0.3.0 (cel 0.15)
+
+- Compilation uses the standard CEL environment, including optional access syntax
+  (`user.?name`) and the `optMap` / `optFlatMap` macros.
+- The strings, lists, math, and encoders libraries are opt-in through `extensions:`.
+- Default contexts preserve [`max` and `min`](#max-and-min) despite their removal
+  from upstream's defaults.
+- From cel 0.13, replace list/map `.contains(value)` with `value in collection`;
+  `.contains()` now only accepts strings. Duplicate map keys raise
+  `CEL::ExecutionError`, and string `size()` counts Unicode code points.
+  See the [cel 0.15 release notes](https://github.com/cel-rust/cel-rust/releases/tag/v0.15.0).
+- `string(bytes)` rejects invalid UTF-8. Numeric conversions reject out-of-range
+  results; timestamps and durations must fit CEL's allowed ranges.
+- `all()` and `exists()` can absorb an earlier evaluation error when a later
+  element determines the result. `[2, 1].exists(e, 6 / (2 - e) == 6)` returns `true`
+  despite the first element's division by zero.
+- Ruby callbacks cannot shadow standard builtins in default contexts, except
+  `max` and `min`. Conflicts raise `CEL::ExecutionError` when execution builds its
+  context, even if the expression does not call the function. Use
+  `CEL::Context.new(true)` or `CEL::Context.build(empty: true)` for custom-only
+  contexts. Registering a custom callback name again replaces its previous callback.
+
+### 0.2.0 (cel 0.13)
+
+- Adds precompiled native-gem release packaging; Ruby APIs and CEL behavior are
+  unchanged from 0.1.0.
+
+### 0.1.0 (cel 0.13)
+
+- Initial Ruby bindings. Evaluation releases the GVL; Ruby callbacks reacquire it.
+- Opaque custom Rust values cannot be marshaled to Ruby and raise `CEL::TypeError`.
+- Ruby support does not cover every Rust-only extension point.
+
+### Beta (0.4.0)
+
+- Includes the full upstream range since cel 0.15.0, not just #339.
+- Adds `max_iterations:`, per-call `timeout:` / `interrupt:`, and
+  `CEL::CancellationToken`. GVL behavior is unchanged; secondary-thread failures
+  now raise the documented CEL exception classes.
+- `references` excludes comprehension bindings (such as `x` in
+  `items.map(x, x + offset)`) and removes leading dots from absolute names.
+- Map membership with an unusable key (such as `[] in {'a': 1}`) returns `false`.
+  Optional indexing suppresses missing-key/out-of-bounds errors only; invalid
+  operations such as `[1][?'bad'].hasValue()` raise `CEL::ExecutionError`.
+- Duplicate extensions still raise `ArgumentError`. New upstream bindings/network
+  libraries and configurable list-range sizes are not exposed by this beta.
