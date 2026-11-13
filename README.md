@@ -225,69 +225,24 @@ CI also runs the test suite on Ruby 3.3, Ruby 3.4, and Ruby 4.0 through Buildkit
 
 ### Nightly snapshots
 
-The beta track follows upstream's default branch through exact Git snapshots.
-The first snapshot, `0.4.0.beta.20261111.1`, includes
-[cel-rust #339](https://github.com/cel-rust/cel-rust/pull/339) and pins
-[upstream head db2afd9](https://github.com/cel-rust/cel-rust/commit/db2afd90cfc6f8bd6c845dc51f43d89b4a133752).
-The gem has its own version line: the next gem release is 0.4.0, while upstream
-still declares its unreleased crate as 0.15.0.
+Nightly betas pin upstream's default branch and use `X.Y.Z.beta.YYYYMMDD.N`
+(next gem release, UTC date, daily counter).
 
-To opt into the first beta once published, specify
-`gem "cel-rs-rb", "0.4.0.beta.20261111.1"`.
-Ordinary installs continue to select the stable gem; review artifacts are not
-automatically published to RubyGems.
-Building the generic source gem requires Rust, Git, and access to the pinned
-upstream Git repository. Its manifest pins the cel revision even though the
-generic gem does not include the development `Cargo.lock`; transitive crates
-are resolved at installation time.
-
-Beta versions use `X.Y.Z.beta.YYYYMMDD.N`: `X.Y.Z` is the next intended **gem**
-release, the date is UTC, and `N` starts at 1 and increments for further updates
-on the same day. For example, `0.4.0.beta.20261111.1` and
-`0.4.0.beta.20261111.2` both sort before the eventual stable `0.4.0`.
-The date/counter identifies a review snapshot, not an upstream crate release.
-
-Prepare the next snapshot locally:
+Prepare a snapshot, then test and open an update PR:
 
 ```bash
 mise run beta:update
+mise run test
+mise run clippy
 ```
 
-This resolves upstream's default-branch HEAD (currently `master`), pins its full
-SHA in `ext/cel/Cargo.toml`, refreshes `Cargo.lock`, bumps `CEL::VERSION`, and
-updates the local path-gem version in `Gemfile.lock`. It verifies the resolved
-Git dependency's SHA, distinguishing it from the extension's own package also
-named `cel`. It never commits, pushes, merges, tags, or publishes.
+Set `BETA_BASE_VERSION=0.5.0` when starting a new gem release line.
 
-The base defaults to the current gem version's `X.Y.Z`. After a stable release,
-explicitly select the next beta line, for example:
+Buildkite produces tested native and source `.gem` artifacts for prerelease PRs;
+download them from that build to review. Nothing is scheduled or published
+automatically. Merging, tagging, and publishing require human approval.
 
-```bash
-BETA_BASE_VERSION=0.5.0 mise run beta:update
-```
-
-Review the complete upstream range, adapt the binding if needed, and run
-`mise run test` and `mise run clippy`. Open an update PR with the four changed
-version/dependency files and any compatibility changes. If either dependency
-resolver fails, inspect the partial working diff before retrying.
-
-This repository provides the snapshot update command and build path. It does
-not schedule refreshes, merge updates, or publish releases automatically.
-
-### Buildkite review artifacts
-
-The normal CI pipeline runs the Ruby 3.3/3.4/4.0 matrix, Standard, and Clippy.
-After those pass, `beta:package` uploads `.buildkite/package.pipeline.yml` when
-the checked-out gem version is a prerelease. Stable-version CI skips packaging.
-The package pipeline builds all six native gems plus the source gem, then runs
-the packaged runtime RSpec suite against installed source and arm64 macOS gems.
-
-Download the `.gem` artifacts from the exact Buildkite build to review a snapshot
-before publication. Packaging has no publishing command or RubyGems OIDC plugin.
-The existing release pipeline reuses these same packaging steps.
-
-Buildkite currently disables fork PR builds. A same-repository branch is needed
-for ordinary CI, or a maintainer must separately enable/run fork validation.
+Source gems require Rust and Git; transitive dependencies resolve at install time.
 
 ## Releasing
 
