@@ -5,13 +5,6 @@
 Ruby bindings for the Rust [`cel`](https://crates.io/crates/cel) crate,
 implemented with [Magnus](https://github.com/matsadler/magnus).
 
-The beta track follows upstream's default branch through exact Git snapshots.
-The first snapshot, `0.4.0.beta.20261111.1`, includes
-[cel-rust #339](https://github.com/cel-rust/cel-rust/pull/339) and pins
-[upstream head db2afd9](https://github.com/cel-rust/cel-rust/commit/db2afd90cfc6f8bd6c845dc51f43d89b4a133752).
-The gem has its own version line: the next gem release is 0.4.0, while upstream
-still declares its unreleased crate as 0.15.0.
-
 ## Goals
 
 - Ruby-first API over the Rust CEL engine
@@ -201,6 +194,13 @@ exhaustion fails the entire evaluation with `CEL::ExecutionError`, even inside
   invoking Ruby code.
 
 ## Development
+
+The beta track follows upstream's default branch through exact Git snapshots.
+The first snapshot, `0.4.0.beta.20261111.1`, includes
+[cel-rust #339](https://github.com/cel-rust/cel-rust/pull/339) and pins
+[upstream head db2afd9](https://github.com/cel-rust/cel-rust/commit/db2afd90cfc6f8bd6c845dc51f43d89b4a133752).
+The gem has its own version line: the next gem release is 0.4.0, while upstream
+still declares its unreleased crate as 0.15.0.
 
 ### Tooling
 
