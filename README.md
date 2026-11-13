@@ -19,15 +19,6 @@ implemented with [Magnus](https://github.com/matsadler/magnus).
 gem "cel-rs-rb"
 ```
 
-To opt into the first beta once published, specify
-`gem "cel-rs-rb", "0.4.0.beta.20261111.1"`.
-Ordinary installs continue to select the stable gem; review artifacts are not
-automatically published to RubyGems.
-Building the generic source gem requires Rust, Git, and access to the pinned
-upstream Git repository. Its manifest pins the cel revision even though the
-generic gem does not include the development `Cargo.lock`; transitive crates
-are resolved at installation time.
-
 ## Usage
 
 ```ruby
@@ -201,6 +192,15 @@ The first snapshot, `0.4.0.beta.20261111.1`, includes
 [upstream head db2afd9](https://github.com/cel-rust/cel-rust/commit/db2afd90cfc6f8bd6c845dc51f43d89b4a133752).
 The gem has its own version line: the next gem release is 0.4.0, while upstream
 still declares its unreleased crate as 0.15.0.
+
+To opt into the first beta once published, specify
+`gem "cel-rs-rb", "0.4.0.beta.20261111.1"`.
+Ordinary installs continue to select the stable gem; review artifacts are not
+automatically published to RubyGems.
+Building the generic source gem requires Rust, Git, and access to the pinned
+upstream Git repository. Its manifest pins the cel revision even though the
+generic gem does not include the development `Cargo.lock`; transitive crates
+are resolved at installation time.
 
 ### Tooling
 
