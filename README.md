@@ -271,9 +271,8 @@ Review the complete upstream range, adapt the binding if needed, and run
 version/dependency files and any compatibility changes. If either dependency
 resolver fails, inspect the partial working diff before retrying.
 
-The separate upstream monitor owns nightly/recurring refresh requests. This
-repository provides the update command and build path; it creates no schedule,
-listener, automatic merge, or unattended release.
+This repository provides the snapshot update command and build path. It does
+not schedule refreshes, merge updates, or publish releases automatically.
 
 ### Buildkite review artifacts
 
@@ -289,8 +288,6 @@ The existing release pipeline reuses these same packaging steps.
 
 Buildkite currently disables fork PR builds. A same-repository branch is needed
 for ordinary CI, or a maintainer must separately enable/run fork validation.
-The live pipeline settings are managed in `buildkite/saas-iac`; this change does
-not modify them.
 
 ## Releasing
 
