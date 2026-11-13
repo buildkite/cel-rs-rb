@@ -32,9 +32,6 @@ program.execute(context)
 # => 60
 ```
 
-Contexts keep registered Ruby callbacks and their captured values alive through
-garbage collection and compaction; callers do not need to retain the blocks.
-
 ### Optional values
 
 Use optional access to handle missing fields, and `orValue` to supply a default:
