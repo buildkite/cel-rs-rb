@@ -32,6 +32,9 @@ program.execute(context)
 # => 60
 ```
 
+Contexts keep registered Ruby callbacks and their captured values alive through
+garbage collection and compaction; callers do not need to retain the blocks.
+
 ### Optional values
 
 Use optional access to handle missing fields, and `orValue` to supply a default:
@@ -172,6 +175,8 @@ This runs:
 CI also runs the test suite on Ruby 3.3, Ruby 3.4, and Ruby 4.0 through Buildkite.
 
 ## Releasing
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes. Update it alongside each version bump.
 
 Releases publish a generic `ruby` platform gem and **precompiled native gems**
 for six platforms (`x86_64-linux`, `aarch64-linux`, `x86_64-linux-musl`,

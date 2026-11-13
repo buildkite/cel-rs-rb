@@ -2,6 +2,7 @@
 
 require "spec_helper"
 require "time"
+require "open3"
 
 RSpec.describe CEL do
   describe ".compile" do
@@ -97,6 +98,40 @@ RSpec.describe CEL do
       end
 
       expect(CEL.compile("sum(1, 2, 3)").execute(context)).to eq(6)
+    end
+
+    it "keeps registered callbacks alive through garbage collection and compaction" do
+      # Isolate native GC failures and discard the registering thread's stack roots.
+      output, status = Open3.capture2e(
+        RbConfig.ruby, "-I", File.expand_path("../lib", __dir__), "-rcel", "-rweakref", "-e", <<~RUBY
+          context, callbacks = Thread.new do
+            ctx = CEL::Context.new
+            prefix = +"retained:token:"
+            decorate = proc { |value| prefix + value }
+            collect = proc do
+              GC.start
+              GC.verify_compaction_references(expand_heap: true, toward: :empty)
+              17
+            end
+            ctx.define_function("decorate", &decorate)
+            ctx.define_function("collect", &collect)
+            [ctx, [WeakRef.new(decorate), WeakRef.new(collect)]]
+          end.value
+
+          program = CEL.compile("[decorate('ok'), collect(), decorate('again')]")
+          3.times do
+            GC.start
+            GC.verify_compaction_references(expand_heap: true, toward: :empty)
+            raise "registered callback was collected" unless callbacks.all?(&:weakref_alive?)
+            result = program.execute(context)
+            raise "incorrect callback result: \#{result.inspect}" unless result == [
+              "retained:token:ok", 17, "retained:token:again"
+            ]
+          end
+        RUBY
+      )
+
+      expect(status.success?).to eq(true), output
     end
 
     it "passes method receiver as first block arg for method calls" do
