@@ -155,12 +155,21 @@ struct FunctionRegistration {
     callback: Arc<CallbackFunction>,
 }
 
-#[derive(Default)]
-#[magnus::wrap(class = "CEL::Context", free_immediately, size)]
+#[derive(Default, magnus::TypedData)]
+#[magnus(class = "CEL::Context", free_immediately, size, mark)]
 struct ContextWrap {
     use_empty: bool,
     variables: Mutex<HashMap<String, CelValue>>,
     functions: Mutex<Vec<FunctionRegistration>>,
+}
+
+impl magnus::DataTypeFunctions for ContextWrap {
+    fn mark(&self, marker: &magnus::gc::Marker) {
+        for registration in self.functions.lock().unwrap().iter() {
+            // Non-movable marking also pins the Proc during Ruby compaction.
+            marker.mark(registration.callback.proc);
+        }
+    }
 }
 
 #[magnus::wrap(class = "CEL::Program", free_immediately, size)]

@@ -24,6 +24,7 @@ Gem::Specification.new do |spec|
     "spec/**/*.rb",
     "Cargo.toml",
     "LICENSE",
+    "CHANGELOG.md",
     "README.md"
   ]
 
