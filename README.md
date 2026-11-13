@@ -186,6 +186,45 @@ exhaustion fails the entire evaluation with `CEL::ExecutionError`, even inside
 
 ## Development
 
+### Tooling
+
+Uses [mise](https://mise.jdx.dev/) for versions:
+
+```toml
+[tools]
+ruby = "4.0"
+rust = "1.96.0"
+```
+
+Install the configured toolchains and Ruby dependencies:
+
+```bash
+mise install
+mise run deps
+```
+
+Native compilation also requires a C toolchain and libclang. CI installs the
+Linux system dependencies with `mise run ci:install-system-deps`.
+
+### Test + lint
+
+```bash
+mise run test
+mise run clippy
+```
+
+`mise run test` runs:
+
+- `standard` (format/lint)
+- native extension compile
+- `rspec`
+
+`mise run clippy` checks the Rust code with Clippy.
+
+CI also runs the test suite on Ruby 3.3, Ruby 3.4, and Ruby 4.0 through Buildkite.
+
+### Nightly snapshots
+
 The beta track follows upstream's default branch through exact Git snapshots.
 The first snapshot, `0.4.0.beta.20261111.1`, includes
 [cel-rust #339](https://github.com/cel-rust/cel-rust/pull/339) and pins
@@ -201,41 +240,6 @@ Building the generic source gem requires Rust, Git, and access to the pinned
 upstream Git repository. Its manifest pins the cel revision even though the
 generic gem does not include the development `Cargo.lock`; transitive crates
 are resolved at installation time.
-
-### Tooling
-
-Uses [mise](https://mise.jdx.dev/) for versions:
-
-```toml
-[tools]
-ruby = "4.0"
-rust = "1.96.0"
-```
-
-### Test + lint
-
-```bash
-bundle exec rake
-```
-
-This runs:
-
-- `standard` (format/lint)
-- native extension compile
-- `rspec`
-
-CI also runs the test suite on Ruby 3.3, Ruby 3.4, and Ruby 4.0 through Buildkite.
-
-## Releasing
-
-Releases publish a generic `ruby` platform gem and **precompiled native gems**
-for six platforms (`x86_64-linux`, `aarch64-linux`, `x86_64-linux-musl`,
-`aarch64-linux-musl`, `arm64-darwin`, `x86_64-darwin`) to
-[rubygems.org](https://rubygems.org/gems/cel-rs-rb). The generic gem keeps
-RubyGems' latest-version metadata aligned; supported platforms should still
-resolve to their matching precompiled native gem.
-
-### Beta snapshots
 
 Beta versions use `X.Y.Z.beta.YYYYMMDD.N`: `X.Y.Z` is the next intended **gem**
 release, the date is UTC, and `N` starts at 1 and increments for further updates
@@ -287,6 +291,15 @@ Buildkite currently disables fork PR builds. A same-repository branch is needed
 for ordinary CI, or a maintainer must separately enable/run fork validation.
 The live pipeline settings are managed in `buildkite/saas-iac`; this change does
 not modify them.
+
+## Releasing
+
+Releases publish a generic `ruby` platform gem and **precompiled native gems**
+for six platforms (`x86_64-linux`, `aarch64-linux`, `x86_64-linux-musl`,
+`aarch64-linux-musl`, `arm64-darwin`, `x86_64-darwin`) to
+[rubygems.org](https://rubygems.org/gems/cel-rs-rb). The generic gem keeps
+RubyGems' latest-version metadata aligned; supported platforms should still
+resolve to their matching precompiled native gem.
 
 ### Human-authorized publication
 
