@@ -23,6 +23,7 @@ Gem::Specification.new do |spec|
     "ext/**/*.{rb,rs,toml}",
     "spec/**/*.rb",
     "Cargo.toml",
+    "Cargo.lock",
     "LICENSE",
     "CHANGELOG.md",
     "README.md"

@@ -84,6 +84,7 @@ is the full dependency change since 0.3.x.
   keep their original callbacks alive and pinned against GC compaction until
   execution finishes, including when execution raises an error or its Ruby thread
   is interrupted or killed.
+- Include `Cargo.lock` in source gems so native builds use the checked-in Rust dependency versions.
 
 ## 0.3.1
 
