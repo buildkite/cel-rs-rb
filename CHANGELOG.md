@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Allow replaced Ruby callbacks and their captured values to be garbage collected once in-flight executions finish.
+
 ## 0.3.1
 
 ### Fixed

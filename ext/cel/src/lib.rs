@@ -4,7 +4,9 @@ use cel::{
 };
 use magnus::block::Proc;
 use magnus::prelude::*;
+use magnus::rb_sys::AsRawValue;
 use magnus::typed_data::Obj;
+use magnus::value::BoxValue;
 use magnus::{function, method, Error, IntoValue, RHash, RString, Ruby, TryConvert, Value};
 use rb_sys::{rb_thread_call_with_gvl, rb_thread_call_without_gvl};
 use std::collections::HashMap;
@@ -68,7 +70,7 @@ mod errors {
     }
 }
 
-fn without_gvl<F, T>(f: F) -> T
+fn without_gvl<F, T>(f: F) -> Result<T, Error>
 where
     F: FnOnce() -> T,
     T: Send,
@@ -98,16 +100,19 @@ where
         result: None,
     };
 
-    unsafe {
+    // Ruby can raise an interrupt while reacquiring the GVL. Catch its longjmp
+    // here so the caller's Rust-owned execution context and GC roots are dropped.
+    magnus::rb_sys::protect(|| unsafe {
         rb_thread_call_without_gvl(
             Some(call::<F, T>),
             &mut state as *mut _ as *mut c_void,
             None,
             std::ptr::null_mut(),
         );
-    }
+        Ruby::get().expect("ruby runtime").qnil().as_raw()
+    })?;
 
-    state.result.expect("result missing")
+    Ok(state.result.expect("result missing"))
 }
 
 fn with_gvl<F, T>(f: F) -> T
@@ -149,25 +154,19 @@ struct CallbackFunction {
 unsafe impl Send for CallbackFunction {}
 unsafe impl Sync for CallbackFunction {}
 
-#[derive(Clone)]
-struct FunctionRegistration {
-    name: String,
-    callback: Arc<CallbackFunction>,
-}
-
 #[derive(Default, magnus::TypedData)]
 #[magnus(class = "CEL::Context", free_immediately, size, mark)]
 struct ContextWrap {
     use_empty: bool,
     variables: Mutex<HashMap<String, CelValue>>,
-    functions: Mutex<Vec<FunctionRegistration>>,
+    functions: Mutex<HashMap<String, Arc<CallbackFunction>>>,
 }
 
 impl magnus::DataTypeFunctions for ContextWrap {
     fn mark(&self, marker: &magnus::gc::Marker) {
-        for registration in self.functions.lock().unwrap().iter() {
+        for callback in self.functions.lock().unwrap().values() {
             // Non-movable marking also pins the Proc during Ruby compaction.
-            marker.mark(registration.callback.proc);
+            marker.mark(callback.proc);
         }
     }
 }
@@ -346,7 +345,7 @@ impl ContextWrap {
         Self {
             use_empty: empty,
             variables: Mutex::new(HashMap::new()),
-            functions: Mutex::new(Vec::new()),
+            functions: Mutex::new(HashMap::new()),
         }
     }
 
@@ -359,10 +358,10 @@ impl ContextWrap {
     }
 
     fn add_function(&self, name: String, proc: Proc) {
-        self.functions.lock().unwrap().push(FunctionRegistration {
-            name,
-            callback: Arc::new(CallbackFunction { proc }),
-        });
+        self.functions
+            .lock()
+            .unwrap()
+            .insert(name, Arc::new(CallbackFunction { proc }));
     }
 
     fn build_context(&self, env: Arc<cel::Env>) -> Result<CelContext<'static, 'static>, Error> {
@@ -381,11 +380,10 @@ impl ContextWrap {
             ctx.add_variable_from_value(name.as_str(), value.clone());
         }
 
-        for registration in self.functions.lock().unwrap().iter() {
-            let callback = registration.callback.clone();
-            let function_name = registration.name.clone();
+        for (name, callback) in self.functions.lock().unwrap().iter() {
+            let callback = callback.clone();
             ctx.add_function(
-                &function_name,
+                name,
                 move |ftx: &FunctionContext,
                       cel::extractors::Arguments(args): cel::extractors::Arguments|
                       -> ResolveResult {
@@ -464,13 +462,25 @@ impl ProgramWrap {
     }
 
     fn execute_with_context(&self, context: &ContextWrap) -> Result<Value, Error> {
+        // Root and pin this run's callbacks before releasing the GVL. A registration
+        // can be replaced while execution is in flight, including from a callback.
+        // These roots are dropped with the GVL held, on both success and error.
+        let callbacks: Vec<_> = context
+            .functions
+            .lock()
+            .unwrap()
+            .values()
+            .map(|callback| callback.proc)
+            .collect();
+        // Registering a root can trigger GC, whose mark hook locks functions again.
+        let _callbacks: Vec<_> = callbacks.into_iter().map(BoxValue::new).collect();
         self.execute_with_context_internal(&context.build_context(self.env.clone())?)
     }
 
     fn execute_with_context_internal(&self, ctx: &CelContext<'_, '_>) -> Result<Value, Error> {
         let run = || self.inner.execute(ctx);
         let result = panic::catch_unwind(AssertUnwindSafe(|| without_gvl(run)))
-            .map_err(|_| errors::execution("CEL execution panicked"))?;
+            .map_err(|_| errors::execution("CEL execution panicked"))??;
 
         let ruby = Ruby::get().expect("ruby runtime");
         result
