@@ -136,25 +136,19 @@ struct CallbackFunction {
 unsafe impl Send for CallbackFunction {}
 unsafe impl Sync for CallbackFunction {}
 
-#[derive(Clone)]
-struct FunctionRegistration {
-    name: String,
-    callback: Arc<CallbackFunction>,
-}
-
 #[derive(Default, magnus::TypedData)]
 #[magnus(class = "CEL::Context", free_immediately, size, mark)]
 struct ContextWrap {
     use_empty: bool,
     variables: Mutex<HashMap<String, CelValue>>,
-    functions: Mutex<Vec<FunctionRegistration>>,
+    functions: Mutex<HashMap<String, Arc<CallbackFunction>>>,
 }
 
 impl magnus::DataTypeFunctions for ContextWrap {
     fn mark(&self, marker: &magnus::gc::Marker) {
-        for registration in self.functions.lock().unwrap().iter() {
+        for callback in self.functions.lock().unwrap().values() {
             // Non-movable marking also pins the Proc during Ruby compaction.
-            marker.mark(registration.callback.proc);
+            marker.mark(callback.proc);
         }
     }
 }
@@ -346,7 +340,7 @@ impl ContextWrap {
         Self {
             use_empty: empty,
             variables: Mutex::new(HashMap::new()),
-            functions: Mutex::new(Vec::new()),
+            functions: Mutex::new(HashMap::new()),
         }
     }
 
@@ -359,13 +353,10 @@ impl ContextWrap {
     }
 
     fn add_function(&self, name: String, proc: Proc) {
-        let mut functions = self.functions.lock().unwrap();
-        let callback = Arc::new(CallbackFunction { proc });
-        if let Some(registration) = functions.iter_mut().find(|entry| entry.name == name) {
-            registration.callback = callback;
-        } else {
-            functions.push(FunctionRegistration { name, callback });
-        }
+        self.functions
+            .lock()
+            .unwrap()
+            .insert(name, Arc::new(CallbackFunction { proc }));
     }
 
     fn build_context<'v>(&self, env: Arc<cel::Env>) -> Result<CelContext<'v, 'v>, Error> {
@@ -386,11 +377,10 @@ impl ContextWrap {
             ctx.add_variable_from_value(name.as_str(), value.clone());
         }
 
-        for registration in self.functions.lock().unwrap().iter() {
-            let callback = registration.callback.clone();
-            let function_name = registration.name.clone();
+        for (name, callback) in self.functions.lock().unwrap().iter() {
+            let callback = callback.clone();
             ctx.add_function(
-                &function_name,
+                name,
                 move |ftx: &FunctionContext,
                       cel::extractors::Arguments(args): cel::extractors::Arguments|
                       -> ResolveResult {
@@ -508,8 +498,8 @@ impl ProgramWrap {
             .functions
             .lock()
             .unwrap()
-            .iter()
-            .map(|registration| registration.callback.proc)
+            .values()
+            .map(|callback| callback.proc)
             .collect();
         // Registering a root can trigger GC, whose mark hook locks functions again.
         let _callbacks: Vec<_> = callbacks.into_iter().map(BoxValue::new).collect();
