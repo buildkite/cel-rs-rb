@@ -136,6 +136,7 @@ evaluation with `CEL::ExecutionError`, even inside `||`, `&&`, or optional acces
 - `CEL::Context#add_variable(name, value)`
 - `CEL::Context#define_function(name) { |*args| ... }`
 - `CEL::Duration.new(seconds)` -> duration value for context variables and duration results
+- `CEL::Duration::MIN_NANOSECONDS`, `MAX_NANOSECONDS` -> exact inclusive duration bounds as Ruby Integers
 
 ## Type support
 
@@ -162,9 +163,13 @@ evaluation with `CEL::ExecutionError`, even inside `||`, `&&`, or optional acces
 - `list` -> `Array`
 - `map` -> `Hash`
 
-Durations support CEL's range of ±315576000000.999999999 seconds. Ruby's
-`CEL::Duration.new`, `total_seconds` / `to_f`, and display methods use floating-point
-seconds, so they cannot represent every nanosecond at large magnitudes. Keep exact
+Durations support CEL's range of ±315576000000.999999999 seconds. The exact inclusive
+bounds are available as Ruby Integers in `CEL::Duration::MIN_NANOSECONDS` and
+`CEL::Duration::MAX_NANOSECONDS`. These constants are in nanoseconds; the constructor
+and conversion methods use seconds. Converting the bounds to Float loses precision.
+
+Ruby's `CEL::Duration.new`, `total_seconds` / `to_f`, and display methods use
+floating-point seconds, so they cannot represent every nanosecond at large magnitudes. Keep exact
 duration arithmetic and `string(duration)` formatting inside CEL when precision matters.
 
 ## Error classes

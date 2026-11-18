@@ -364,6 +364,20 @@ RSpec.describe CEL do
       expect(CEL.compile("[1] + [2]").execute).to eq([1, 2])
     end
 
+    it "exposes exact inclusive duration limits in nanoseconds" do
+      boundaries = [
+        [CEL::Duration::MAX_NANOSECONDS, "315576000000.999999999s"],
+        [CEL::Duration::MIN_NANOSECONDS, "-315576000000.999999999s"]
+      ]
+
+      boundaries.each do |nanoseconds, formatted|
+        expect(nanoseconds).to be_an(Integer)
+        expect(CEL.compile("string(duration('#{nanoseconds}ns'))").execute).to eq(formatted)
+        outside = nanoseconds + (nanoseconds.negative? ? -1 : 1)
+        expect { CEL.compile("duration('#{outside}ns')").execute }.to raise_error(CEL::ExecutionError)
+      end
+    end
+
     it "preserves the widened duration range and exact decimal parsing" do
       [-315_576_000_000, -10_000_000_000, 10_000_000_000, 315_576_000_000].each do |seconds|
         duration = CEL.compile("duration('#{seconds}s')").execute

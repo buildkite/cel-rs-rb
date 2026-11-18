@@ -302,24 +302,36 @@ fn cel_to_ruby(ruby: &Ruby, value: &CelValue) -> Result<Value, Error> {
 }
 
 impl DurationWrap {
+    const NANOS_PER_SECOND: i128 = 1_000_000_000;
+
+    // https://github.com/cel-rust/cel-rust/blob/v0.16.0/src/common/types/duration.rs
+    const MAX_NANOSECONDS: i128 = 315_576_000_000_999_999_999;
+    const MIN_NANOSECONDS: i128 = -Self::MAX_NANOSECONDS;
+
+    // CEL's exact maximum rounds up to this first invalid whole second in f64.
+    const MAX_ABS_SECONDS_EXCLUSIVE: f64 =
+        (Self::MAX_NANOSECONDS / Self::NANOS_PER_SECOND + 1) as f64;
+
     fn new(seconds: f64) -> Result<Self, Error> {
         if !seconds.is_finite() {
             return Err(errors::ty("Duration seconds must be finite"));
         }
 
-        // The next whole second beyond CEL's protobuf Duration range is invalid.
-        if seconds.abs() >= 315_576_000_001.0 {
+        if seconds.abs() >= Self::MAX_ABS_SECONDS_EXCLUSIVE {
             return Err(errors::ty("Duration is out of range"));
         }
 
         Ok(Self {
             inner: chrono::Duration::seconds(seconds.trunc() as i64)
-                + chrono::Duration::nanoseconds((seconds.fract() * 1_000_000_000.0).round() as i64),
+                + chrono::Duration::nanoseconds(
+                    (seconds.fract() * Self::NANOS_PER_SECOND as f64).round() as i64,
+                ),
         })
     }
 
     fn total_seconds(&self) -> f64 {
-        self.inner.num_seconds() as f64 + self.inner.subsec_nanos() as f64 / 1_000_000_000.0
+        self.inner.num_seconds() as f64
+            + self.inner.subsec_nanos() as f64 / Self::NANOS_PER_SECOND as f64
     }
 
     fn to_s(&self) -> String {
@@ -562,6 +574,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     context_class.define_method("add_function", method!(ContextWrap::add_function, 2))?;
 
     let duration_class = module.define_class("Duration", ruby.class_object())?;
+    duration_class.const_set("MAX_NANOSECONDS", DurationWrap::MAX_NANOSECONDS)?;
+    duration_class.const_set("MIN_NANOSECONDS", DurationWrap::MIN_NANOSECONDS)?;
     duration_class.define_singleton_method("new", function!(DurationWrap::new, 1))?;
     duration_class.define_method("total_seconds", method!(DurationWrap::total_seconds, 0))?;
     duration_class.define_method("to_f", method!(DurationWrap::total_seconds, 0))?;
