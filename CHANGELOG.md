@@ -53,3 +53,37 @@ is the full dependency change since 0.3.x.
   `CEL::Context` is reachable. Prevents use-after-free after the caller drops its
   own reference and Ruby runs garbage collection. Callbacks are also pinned during
   compaction, including when collection runs inside a callback.
+
+## 0.3.0
+
+Upgrade from cel 0.13 to [cel 0.15.0](https://github.com/cel-rust/cel-rust/releases/tag/v0.15.0).
+
+### Breaking and behavior changes
+
+- List/map `.contains(value)` is no longer supported; use `value in collection`.
+  `.contains()` only accepts strings.
+- Map literals with duplicate keys raise `CEL::ExecutionError`.
+- String `size()` counts Unicode code points rather than bytes.
+- `string(bytes)` rejects invalid UTF-8.
+- Numeric conversions reject out-of-range results, and parsed timestamps and
+  durations must fit CEL's allowed ranges.
+- `all()` and `exists()` can absorb an earlier evaluation error when a later
+  element determines the result.
+- Ruby callbacks cannot shadow standard CEL builtins in default contexts.
+  Conflicts raise `CEL::ExecutionError` during execution, even if the expression
+  does not call the conflicting function. Empty contexts have no builtin conflicts;
+  registering the same custom callback name again still replaces its callback.
+
+### Added
+
+- Compilation uses the standard CEL environment, including optional access and
+  the `optMap` / `optFlatMap` macros.
+- Opt-in `extensions:` for the strings, lists, math, and encoders libraries.
+
+### Compatibility
+
+- Default contexts retain `max` and `min` for compatibility with cel 0.13 even
+  though upstream removed them from its defaults. Ruby callbacks can still replace
+  these two functions; empty contexts do not register them.
+- CEL values without a Ruby conversion, including opaque values, raise
+  `CEL::TypeError` when returned to Ruby.

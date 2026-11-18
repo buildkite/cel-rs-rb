@@ -4,6 +4,8 @@
 
 Ruby bindings for the Rust [`cel`](https://crates.io/crates/cel) 0.16 crate, implemented with [Magnus](https://github.com/matsadler/magnus).
 
+See the [changelog](CHANGELOG.md) for breaking changes and upgrade notes.
+
 ## Goals
 
 - Ruby-first API over the Rust CEL engine
@@ -163,11 +165,6 @@ evaluation with `CEL::ExecutionError`, even inside `||`, `&&`, or optional acces
 - `list` -> `Array`
 - `map` -> `Hash`
 
-Durations support CEL's range of ±315576000000.999999999 seconds. The exact inclusive
-bounds are available as Ruby Integers in `CEL::Duration::MIN_NANOSECONDS` and
-`CEL::Duration::MAX_NANOSECONDS`. These constants are in nanoseconds; the constructor
-and conversion methods use seconds. Converting the bounds to Float loses precision.
-
 Ruby's `CEL::Duration.new`, `total_seconds` / `to_f`, and display methods use
 floating-point seconds, so they cannot represent every nanosecond at large magnitudes. Keep exact
 duration arithmetic and `string(duration)` formatting inside CEL when precision matters.
@@ -193,10 +190,7 @@ duration arithmetic and `string(duration)` formatting inside CEL when precision 
 Registering a function name again with `define_function` or `add_function`
 replaces its callback for future executions. In-flight executions keep using
 their original snapshot. Callbacks are kept alive and pinned against Ruby GC
-compaction while registered or used by an in-flight execution. Once replaced,
-an old callback and its captured values can be collected after those executions
-finish, including when their Ruby thread is interrupted or killed, provided
-nothing else references them.
+compaction while registered or used by an in-flight execution.
 
 ## Development
 
@@ -237,11 +231,6 @@ resolve to their matching precompiled native gem.
 
 ### Cutting a release
 
-Merge prerequisite fixes and the release PR before tagging. Each merge, tag, and
-publication needs explicit maintainer approval for that step. Pushing a version
-tag starts automatic publication to RubyGems; approval of a PR is not approval
-to push its release tag.
-
 The gem version comes from `lib/cel/version.rb`, not from the tag, so bump the
 file and tag the same version:
 
@@ -266,20 +255,3 @@ change alongside `lib/cel/version.rb`.
 The `release:verify-tag` step fails the build if the tag and
 `CEL::VERSION` disagree, so the tag (`v0.2.0`) must match `version.rb`
 (`0.2.0`).
-
-## Compatibility notes
-
-- See [0.4.0's breaking changes](CHANGELOG.md#040) before upgrading from 0.3.x:
-  NaN ordering, references, map membership, optional access, list addition, and durations changed.
-- Compilation uses the standard CEL environment, including optional access syntax (`user.?name`) and the `optMap` / `optFlatMap` macros.
-- The upstream strings, lists, math, encoders, and sets libraries are opt-in through `extensions:`.
-- The new upstream bindings, network, and two-variable comprehension extensions are not exposed by this gem.
-  Custom Rust overload declarations and configurable `lists.range` limits are also not Ruby APIs;
-  `lists.range` retains its 1,000,000-element limit.
-- cel 0.15 no longer includes `max` and `min` by default, so default contexts register them for compatibility with cel 0.13. See [`max` and `min`](#max-and-min).
-- When upgrading from cel 0.13, replace list/map `.contains(value)` expressions with `value in collection`; `.contains()` now only accepts strings. Map literals with duplicate keys raise `CEL::ExecutionError`, and string `size()` counts Unicode code points rather than bytes. See the [cel 0.15 release notes](https://github.com/cel-rust/cel-rust/releases/tag/v0.15.0) for further CEL semantic changes.
-- `string(bytes)` now rejects invalid UTF-8. Numeric conversions reject out-of-range results, and parsed timestamps and durations must fit CEL's allowed ranges.
-- `all()` and `exists()` can now absorb an earlier evaluation error when a later element determines the result. For example, `[2, 1].exists(e, 6 / (2 - e) == 6)` returns `true` despite the first element's division by zero.
-- Ruby callbacks cannot shadow standard CEL builtins (such as `size`) in a default context; the compatibility functions `max` and `min` are exceptions. Conflicts raise `CEL::ExecutionError` when `Program#execute(context)` builds the execution snapshot, even if the expression does not call the conflicting function. Use `CEL::Context.new(true)` or `CEL::Context.build(empty: true)` to define functions without builtins. Registering the same custom callback name again replaces the previous callback.
-- Some CEL value variants (e.g. opaque custom Rust types) cannot be fully marshaled to Ruby and raise `CEL::TypeError`.
-- This project targets broad CEL compatibility, but parity for every Rust-only extension point is still evolving.
