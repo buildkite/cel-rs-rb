@@ -5,6 +5,7 @@
 ### Fixed
 
 - Allow replaced Ruby callbacks and their captured values to be garbage collected once in-flight executions finish.
+- Include `Cargo.lock` in source gems so native builds use the checked-in Rust dependency versions.
 
 ## 0.3.1
 
