@@ -21,7 +21,11 @@ RSpec.describe CEL do
         strings: ["'TacoCat'.lowerAscii()", "tacocat"],
         lists: ["[{'n': 8}, {'n': 2}, {'n': 5}].sortBy(x, x.n).map(x, x.n)", [2, 5, 8]],
         math: ["math.greatest(2, 9, -3)", 9],
-        encoders: ["base64.encode(b'hi')", "aGk="]
+        encoders: ["base64.encode(b'hi')", "aGk="],
+        sets: ["[sets.contains([1, 2], [2]), sets.contains([1], [2]), " \
+               "sets.equivalent([1, 1, 2], [2.0, 1u]), sets.equivalent([1], [2]), " \
+               "sets.intersects([1, 2], [2, 3]), sets.intersects([1, 2], [3])]",
+          [true, false, true, false, true, false]]
       }
 
       tests.each do |extension, (expression, expected)|
@@ -49,6 +53,9 @@ RSpec.describe CEL do
       expect(enabled.execute(context)).to eq("abc")
       expect { CEL.compile("'ABC'.lowerAscii()").execute(context) }.to raise_error(CEL::ExecutionError)
       expect { enabled.execute(CEL::Context.new(true)) }.to raise_error(CEL::ExecutionError)
+      expect { CEL.compile("sets.contains([1], [1])").execute(context) }.to raise_error(CEL::ExecutionError)
+      expect { CEL.compile("sets.contains([1], [1])", extensions: [:sets]).execute(CEL::Context.new(true)) }
+        .to raise_error(CEL::ExecutionError)
 
       context.define_function("lowerAscii") { |value| value }
       expect { enabled.execute(context) }.to raise_error(CEL::ExecutionError, /lowerAscii/)
@@ -322,6 +329,183 @@ RSpec.describe CEL do
       expect(refs["functions"]).to include("size")
     end
 
+    it "reports external references without comprehension bindings" do
+      program = CEL.compile("items.map(x, x + offset)")
+      expect(program.references["variables"]).to contain_exactly("items", "offset")
+      refs = CEL.compile("[x].map(x, .f(x + .offset))").references
+      expect(refs["variables"]).to contain_exactly("x", "offset")
+      expect(refs["functions"]).to include("f")
+      expect(refs["functions"]).not_to include(".f")
+      expect(CEL.compile("input.?field.optMap(x, x + 1)").references["variables"])
+        .to contain_exactly("input")
+    end
+
+    it "returns false for unordered numeric comparisons and unusable map membership keys" do
+      context = CEL::Context.build(nan: Float::NAN)
+      %w[< <= > >=].each do |operator|
+        ["nan #{operator} 1", "1u #{operator} nan", "nan #{operator} nan"].each do |expression|
+          expect(CEL.compile(expression).execute(context)).to eq(false)
+        end
+      end
+      ["[] in {}", "null in {'a': 1}", "1.5 in {1: 'a'}"].each do |expression|
+        expect(CEL.compile(expression).execute).to eq(false)
+      end
+      expect(CEL.compile("1.0 in {1: 'a'}").execute).to eq(true)
+      expect { CEL.compile("nan < 'a'").execute(context) }.to raise_error(CEL::ExecutionError)
+    end
+
+    it "only suppresses missing entries in optional access and rejects list plus map" do
+      ["{}[?'a'].hasValue()", "[1][?2].hasValue()", "{}.?a.hasValue()"].each do |expression|
+        expect(CEL.compile(expression).execute).to eq(false)
+      end
+      ["{}[?[]]", "[1][?'a']", "1.?a", "[1] + {'a': 2}"].each do |expression|
+        expect { CEL.compile(expression).execute }.to raise_error(CEL::ExecutionError)
+      end
+      expect(CEL.compile("[1] + [2]").execute).to eq([1, 2])
+    end
+
+    it "exposes exact inclusive duration limits in nanoseconds" do
+      boundaries = [
+        [CEL::Duration::MAX_NANOSECONDS, "315576000000.999999999s"],
+        [CEL::Duration::MIN_NANOSECONDS, "-315576000000.999999999s"]
+      ]
+
+      boundaries.each do |nanoseconds, formatted|
+        expect(nanoseconds).to be_an(Integer)
+        expect(CEL.compile("string(duration('#{nanoseconds}ns'))").execute).to eq(formatted)
+        outside = nanoseconds + (nanoseconds.negative? ? -1 : 1)
+        expect { CEL.compile("duration('#{outside}ns')").execute }.to raise_error(CEL::ExecutionError)
+      end
+    end
+
+    it "preserves the widened duration range and exact decimal parsing" do
+      [-315_576_000_000, -10_000_000_000, 10_000_000_000, 315_576_000_000].each do |seconds|
+        duration = CEL.compile("duration('#{seconds}s')").execute
+        expect(duration.total_seconds).to eq(seconds.to_f)
+        expect(duration.to_s).to eq("#{seconds}s")
+        expect(duration).to eq(CEL::Duration.new(seconds))
+        context = CEL::Context.build(delay: duration)
+        expect(CEL.compile("delay == duration('#{seconds}s')").execute(context)).to eq(true)
+      end
+      expect(CEL.compile("string(duration('4.02us'))").execute).to eq("0.00000402s")
+      expect(CEL.compile("string(duration('315576000000.999999999s'))").execute)
+        .to eq("315576000000.999999999s")
+      expect { CEL.compile("duration('315576000001s')").execute }.to raise_error(CEL::ExecutionError)
+      [315_576_000_001, -315_576_000_001, Float::NAN].each do |seconds|
+        expect { CEL::Duration.new(seconds) }.to raise_error(CEL::TypeError)
+      end
+    end
+
+    it "raises documented CEL error classes on secondary Ruby threads" do
+      errors = Thread.new do
+        [
+          -> { CEL.compile("1 +") },
+          -> { CEL.compile("1 / 0").execute },
+          -> { CEL.compile("optional.none()").execute }
+        ].map do |operation|
+          operation.call
+        rescue => e
+          e.class
+        end
+      end.value
+      expect(errors).to eq([CEL::ParseError, CEL::ExecutionError, CEL::TypeError])
+    end
+
+    it "bounds total nested iterations with a fresh budget for every execution" do
+      expression = "[1, 2].map(x, [3, 4].filter(y, y > x))"
+      program = CEL.compile(expression, max_iterations: 6)
+      [nil, CEL::Context.new, CEL::Context.new(true)].each do |context|
+        2.times { expect(program.execute(context)).to eq([[3, 4], [3, 4]]) }
+        expect { CEL.compile(expression, max_iterations: 5).execute(context) }
+          .to raise_error(CEL::ExecutionError, /iteration.*5/i)
+      end
+      expect(CEL.compile(expression).execute).to eq([[3, 4], [3, 4]])
+    end
+
+    it "does not let logical or optional expressions absorb budget failures" do
+      [
+        "[1, 2].all(x, x > 0) || true",
+        "[1, 2].all(x, x > 0) && false",
+        "[[1, 2].all(x, x > 0)][?0].hasValue()"
+      ].each do |expression|
+        expect { CEL.compile(expression, max_iterations: 1).execute }
+          .to raise_error(CEL::ExecutionError, /iteration/i)
+      end
+    end
+
+    it "rejects invalid iteration budgets and timeouts" do
+      [-1, 1.5, nil, "3"].each do |budget|
+        expect { CEL.compile("1", max_iterations: budget) }.to raise_error(ArgumentError)
+      end
+      expect { CEL.compile("1", max_iterations: 2**64) }.to raise_error(RangeError)
+      program = CEL.compile("1")
+      [-1, Float::INFINITY, Float::NAN, 1e100].each do |timeout|
+        expect { program.execute(timeout: timeout) }.to raise_error(ArgumentError, /timeout/)
+      end
+      expect { program.execute(interrupt: Object.new) }.to raise_error(TypeError)
+    end
+
+    it "applies cooperative timeouts per call without poisoning later executions" do
+      program = CEL.compile("['ABC'].map(x, x.lowerAscii())", extensions: [:strings])
+      context = CEL::Context.new
+      expect { program.execute(context, timeout: 0) }.to raise_error(CEL::ExecutionError, /interrupt/i)
+      expect(program.execute(context, timeout: 1)).to eq(["abc"])
+      expect(program.call(timeout: 1)).to eq(["abc"])
+      expect(program.execute_with_context(context, timeout: 1)).to eq(["abc"])
+      expect(program.execute(context)).to eq(["abc"])
+      expect { program.execute(timeout: 0, interrupt: CEL::CancellationToken.new) }
+        .to raise_error(CEL::ExecutionError, /interrupt/i)
+      expect { program.execute(CEL::Context.new(true), timeout: 0) }
+        .to raise_error(CEL::ExecutionError, /interrupt/i)
+      expect(CEL.compile("1 + 1").execute(timeout: 0)).to eq(2)
+    end
+
+    it "observes an elapsed deadline after a Ruby callback returns" do
+      returned = false
+      context = CEL::Context.build do |ctx|
+        ctx.define_function("delay") do
+          sleep(0.02)
+          returned = true
+        end
+      end
+      program = CEL.compile("delay() && [1, 2].all(x, x > 0)")
+      expect { program.execute(context, timeout: 0.001) }
+        .to raise_error(CEL::ExecutionError, /interrupt/i)
+      expect(returned).to eq(true)
+    end
+
+    it "cancels an evaluation from another Ruby thread and keeps other runs independent" do
+      token = CEL::CancellationToken.new
+      expect(token.cancelled?).to eq(false)
+      started = Queue.new
+      resume = Queue.new
+      context = CEL::Context.build(items: [1, 2]) do |ctx|
+        ctx.define_function("started") do
+          started << true
+          resume.pop
+          true
+        end
+      end
+      program = CEL.compile("started() && items.all(x, items.exists(y, y > x)) || true")
+      runner = Thread.new do
+        program.execute(context, interrupt: token)
+      rescue CEL::ExecutionError => e
+        e
+      end
+      started.pop
+      token.cancel!
+      resume << true
+      expect(token.cancelled?).to eq(true)
+      expect(runner.value).to be_a(CEL::ExecutionError).and(have_attributes(message: /interrupt/i))
+
+      control = CEL::Context.build(items: [1, 2]) do |ctx|
+        ctx.define_function("started") { true }
+      end
+      expect(program.execute(control)).to eq(true)
+      expect(program.execute(control, interrupt: CEL::CancellationToken.new)).to eq(true)
+      expect { program.execute(control, interrupt: token) }.to raise_error(CEL::ExecutionError, /interrupt/i)
+    end
+
     it "registers max and min by default" do
       tests = {
         "max(2, 9, -3)" => 9,
@@ -420,7 +604,7 @@ RSpec.describe CEL do
     end
 
     it "executes the same program concurrently with independent contexts" do
-      program = CEL.compile("items.map(x, x + offset).filter(x, x > cutoff).size() + id")
+      program = CEL.compile("items.map(x, x + offset).filter(x, x > cutoff).size() + id", max_iterations: 400)
       ready = Queue.new
       start = Queue.new
 

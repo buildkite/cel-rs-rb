@@ -2,7 +2,9 @@
 
 [![Gem Version](https://img.shields.io/gem/v/cel-rs-rb.svg)](https://rubygems.org/gems/cel-rs-rb)
 
-Ruby bindings for the Rust [`cel`](https://crates.io/crates/cel) 0.15 crate, implemented with [Magnus](https://github.com/matsadler/magnus).
+Ruby bindings for the Rust [`cel`](https://crates.io/crates/cel) 0.16 crate, implemented with [Magnus](https://github.com/matsadler/magnus).
+
+See the [changelog](CHANGELOG.md) for breaking changes and upgrade notes.
 
 ## Goals
 
@@ -76,10 +78,11 @@ program.execute(CEL::Context.build(label: "TacoCat", scores: [2, 9, -3]))
 
 | Library | Examples |
 | --- | --- |
-| [`strings`](https://docs.rs/cel/0.15.0/cel/extensions/fn.strings.html) | `'TacoCat'.lowerAscii()`, `'a,b'.split(',')` |
-| [`lists`](https://docs.rs/cel/0.15.0/cel/extensions/fn.lists.html) | `lists.range(3)`, `[3, 1, 2].sort()`, `items.sortBy(x, x.score)` |
-| [`math`](https://docs.rs/cel/0.15.0/cel/extensions/fn.math.html) | `math.greatest(1, 5, 3)`, `math.least([1, 5, 3])` |
-| [`encoders`](https://docs.rs/cel/0.15.0/cel/extensions/fn.encoders.html) | `base64.encode(b'hi')`, `base64.decode('aGk=')` |
+| [`strings`](https://docs.rs/cel/0.16.0/cel/extensions/fn.strings.html) | `'TacoCat'.lowerAscii()`, `'a,b'.split(',')` |
+| [`lists`](https://docs.rs/cel/0.16.0/cel/extensions/fn.lists.html) | `lists.range(3)`, `[3, 1, 2].sort()`, `items.sortBy(x, x.score)` |
+| [`math`](https://docs.rs/cel/0.16.0/cel/extensions/fn.math.html) | `math.greatest(1, 5, 3)`, `math.least([1, 5, 3])` |
+| [`encoders`](https://docs.rs/cel/0.16.0/cel/extensions/fn.encoders.html) | `base64.encode(b'hi')`, `base64.decode('aGk=')` |
+| [`sets`](https://docs.rs/cel/0.16.0/cel/extensions/fn.sets.html) | `sets.contains([1, 2], [2])`, `sets.equivalent([1, 1], [1])`, `sets.intersects([1], [2])` |
 
 `CEL::Program.compile` accepts the same `extensions:` option. Names can be
 symbols or strings; unknown or repeated names raise `ArgumentError`.
@@ -91,16 +94,51 @@ or add functions to explicitly empty contexts. Ruby callbacks that conflict
 with enabled extension functions raise `CEL::ExecutionError` during execution,
 just like conflicts with standard CEL builtins.
 
+### Evaluation limits and cancellation
+
+Set a comprehension-iteration budget when compiling, and a timeout in seconds
+or cancellation token for each execution:
+
+```ruby
+program = CEL.compile("items.map(x, x * 2)", max_iterations: 1_000)
+context = CEL::Context.build(items: [2, 5, 9])
+program.execute(context, timeout: 0.05) # => [4, 10, 18]
+
+token = CEL::CancellationToken.new
+token.cancel! # Another Ruby thread can call this while evaluation runs.
+program.execute(context, interrupt: token)
+# raises CEL::ExecutionError: operation interrupted
+```
+
+`max_iterations` is an unsigned 64-bit integer; `0` (the default) means unlimited.
+It counts total iterations across nested and sibling comprehensions, with a fresh
+budget per execution, including concurrent executions and explicitly empty contexts.
+
+`timeout: nil` and `interrupt: nil` disable interruption. Timeouts must be finite,
+non-negative seconds within Rust's duration range. Each call gets a fresh deadline,
+starting before the execution snapshot is built. Tokens are one-way: `cancelled?`
+stays true after `cancel!`, and every execution sharing a token sees cancellation.
+Use a new token for an independent run. When both options are supplied, either can
+interrupt execution. `call` and `execute_with_context` accept the same options.
+
+Checks are **cooperative**, performed on comprehension iterations (`all`, `exists`,
+`map`, `filter`, etc.). They are not hard wall-clock timeouts or general cost limits.
+Straight-line expressions, extension work outside comprehensions, and Ruby callbacks
+are not preempted. Once observed, interruption or budget exhaustion fails the whole
+evaluation with `CEL::ExecutionError`, even inside `||`, `&&`, or optional accessors.
+
 ### API mapping
 
-- `CEL.compile(source, extensions: [])` -> `CEL::Program`
-- `CEL::Program.compile(source, extensions: [])` -> `CEL::Program`
-- `CEL::Program#execute(context = nil)` -> Ruby value
+- `CEL.compile(source, extensions: [], max_iterations: 0)` -> `CEL::Program`
+- `CEL::Program.compile(source, extensions: [], max_iterations: 0)` -> `CEL::Program`
+- `CEL::Program#execute(context = nil, timeout: nil, interrupt: nil)` -> Ruby value
 - `CEL::Program#references` -> `{ "variables" => [...], "functions" => [...] }`
+- `CEL::CancellationToken.new`, `#cancel!`, `#cancelled?` -> cooperative cancellation
 - `CEL::Context.new(empty = false)` -> context with builtins (`false`) or empty (`true`)
 - `CEL::Context#add_variable(name, value)`
 - `CEL::Context#define_function(name) { |*args| ... }`
 - `CEL::Duration.new(seconds)` -> duration value for context variables and duration results
+- `CEL::Duration::MIN_NANOSECONDS`, `MAX_NANOSECONDS` -> exact inclusive duration bounds as Ruby Integers
 
 ## Type support
 
@@ -127,6 +165,10 @@ just like conflicts with standard CEL builtins.
 - `list` -> `Array`
 - `map` -> `Hash`
 
+Ruby's `CEL::Duration.new`, `total_seconds` / `to_f`, and display methods use
+floating-point seconds, so they cannot represent every nanosecond at large magnitudes. Keep exact
+duration arithmetic and `string(duration)` formatting inside CEL when precision matters.
+
 ## Error classes
 
 - `CEL::Error`
@@ -147,7 +189,8 @@ just like conflicts with standard CEL builtins.
 
 Registering a function name again with `define_function` or `add_function`
 replaces its callback for future executions. In-flight executions keep using
-their original snapshot.
+their original snapshot. Callbacks are kept alive and pinned against Ruby GC
+compaction while registered or used by an in-flight execution.
 
 ## Development
 
@@ -212,15 +255,3 @@ change alongside `lib/cel/version.rb`.
 The `release:verify-tag` step fails the build if the tag and
 `CEL::VERSION` disagree, so the tag (`v0.2.0`) must match `version.rb`
 (`0.2.0`).
-
-## Compatibility notes
-
-- Compilation uses the standard CEL environment, including optional access syntax (`user.?name`) and the `optMap` / `optFlatMap` macros.
-- The upstream strings, lists, math, and encoders extension libraries are opt-in through the `extensions:` compile option.
-- cel 0.15 no longer includes `max` and `min` by default, so default contexts register them for compatibility with cel 0.13. See [`max` and `min`](#max-and-min).
-- When upgrading from cel 0.13, replace list/map `.contains(value)` expressions with `value in collection`; `.contains()` now only accepts strings. Map literals with duplicate keys raise `CEL::ExecutionError`, and string `size()` counts Unicode code points rather than bytes. See the [cel 0.15 release notes](https://github.com/cel-rust/cel-rust/releases/tag/v0.15.0) for further CEL semantic changes.
-- `string(bytes)` now rejects invalid UTF-8. Numeric conversions reject out-of-range results, and parsed timestamps and durations must fit CEL's allowed ranges.
-- `all()` and `exists()` can now absorb an earlier evaluation error when a later element determines the result. For example, `[2, 1].exists(e, 6 / (2 - e) == 6)` returns `true` despite the first element's division by zero.
-- Ruby callbacks cannot shadow standard CEL builtins (such as `size`) in a default context; the compatibility functions `max` and `min` are exceptions. Conflicts raise `CEL::ExecutionError` when `Program#execute(context)` builds the execution snapshot, even if the expression does not call the conflicting function. Use `CEL::Context.new(true)` or `CEL::Context.build(empty: true)` to define functions without builtins. Registering the same custom callback name again replaces the previous callback.
-- Some CEL value variants (e.g. opaque custom Rust types) cannot be fully marshaled to Ruby and raise `CEL::TypeError`.
-- This project targets broad CEL compatibility, but parity for every Rust-only extension point is still evolving.
