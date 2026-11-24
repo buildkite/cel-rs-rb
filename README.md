@@ -94,6 +94,14 @@ or add functions to explicitly empty contexts. Ruby callbacks that conflict
 with enabled extension functions raise `CEL::ExecutionError` during execution,
 just like conflicts with standard CEL builtins.
 
+### Parser recursion limit
+
+The parser limits nesting to 96 levels. Operator chains count toward the limit
+even without parentheses. This includes arithmetic chains, field access,
+method calls, and indexing. Expressions that exceed the limit raise
+`CEL::ParseError` during compilation. The Ruby API does not expose a setting
+for this limit.
+
 ### Evaluation limits and cancellation
 
 Set a comprehension-iteration budget when compiling, and a timeout in seconds

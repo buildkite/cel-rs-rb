@@ -16,6 +16,12 @@ RSpec.describe CEL do
       expect { CEL.compile("1 +") }.to raise_error(CEL::ParseError)
     end
 
+    it "applies the parser recursion limit to flat arithmetic chains" do
+      expect(CEL.compile("1" + " + 1" * 96).execute).to eq(97)
+      expect { CEL.compile("1" + " + 1" * 97) }
+        .to raise_error(CEL::ParseError, /recursion limit of 96 exceeded/i)
+    end
+
     it "enables each upstream extension for compilation and execution" do
       tests = {
         strings: ["'TacoCat'.lowerAscii()", "tacocat"],

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.1
+
+Upgrade to [cel 0.16.1](https://crates.io/crates/cel/0.16.1) from crates.io.
+
+### Fixed
+
+- Operator chains now count toward the parser's default recursion limit of 96,
+  even when the expression looks flat. Expressions over the limit raise
+  `CEL::ParseError` at compile time. If you generate expressions, check that
+  they stay within this limit. The Ruby API is unchanged.
+- The parser now cleans up long chains and abandoned parses without recursively
+  freeing the parse tree, preventing stack overflows during cleanup.
+
 ## 0.4.0
 
 Upgrade to the published [cel 0.16.0](https://crates.io/crates/cel/0.16.0)
